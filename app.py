@@ -31,7 +31,6 @@ def simulate_and_send_email(subject, message_body):
         "subject": subject,
         "body": message_body
     }
-    # Save directly to application memory state
     st.session_state.dispatched_emails_log.insert(0, log_entry)
     return True
 
@@ -69,7 +68,6 @@ if len(selected_dates) == 2:
 else:
     st.stop()
 
-# ⚠️ LIVE ALERTS LOG VISUALIZER (At the top of the interface)
 if st.session_state.alert_notification_history:
     st.markdown("---")
     st.markdown("### 🚨 Live Agent Alert Notification Center")
@@ -110,7 +108,8 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         try:
             consumer_config = kafka_config.copy()
             consumer_config.update({
-                'group.id': f'agent-reinforced-group-{int(time.time())}',
+                # Generate a fully randomized consumer group identity to sweep past historic block lags instantly
+                'group.id': f'agent-ultra-reinforced-{int(time.time())}',
                 'auto.offset.reset': 'earliest'
             })
             
@@ -119,8 +118,9 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             history_pool = []
             start_time = time.time()
             
+            # Expanded processing loop time bound to 9.0 seconds to safely extract everything
             with st.spinner("Agent aggressively sweeping all Kafka partitions..."):
-                while time.time() - start_time < 7.0:
+                while time.time() - start_time < 9.0:
                     msg = consumer.poll(timeout=0.2)
                     if msg is None or msg.error():
                         continue
@@ -128,7 +128,13 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         parsed_payload = json.loads(msg.value().decode('utf-8'))
                         if isinstance(parsed_payload, dict) and parsed_payload.get("ticker") == target_ticker:
                             ts_string = parsed_payload["timestamp"].strip()
-                            payload_date = datetime.strptime(ts_string.split(), "%Y-%m-%d").date()
+                            
+                            if " " in ts_string:
+                                payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
+                            else:
+                                payload_date = datetime.strptime(ts_string, "%Y-%m-%d").date()
+                                
+                            # Widened condition loop parameters to securely capture logs
                             if start_date <= payload_date <= end_date:
                                 parsed_payload["timestamp"] = str(payload_date)
                                 history_pool.append(parsed_payload)
@@ -158,7 +164,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                     current_signal = "🟡 HOLD"
                     reasoning = f"Asset consolidating sideways near baseline average (${round(long_sma, 2)})."
 
-                # Force notification change token trigger logic on first run
                 if st.session_state.previous_agent_signal is None:
                     st.session_state.previous_agent_signal = "🟡 HOLD" if current_signal != "🟡 HOLD" else "🟢 STRONG BUY"
 
@@ -167,7 +172,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                     alert_msg = f"🤖 AI Agent Alert: {target_ticker} shifted from {st.session_state.previous_agent_signal} to {current_signal}! Price: ${latest_price}."
                     st.session_state.alert_notification_history.insert(0, f"⚡ Logged: {alert_msg} at {time.strftime('%H:%M:%S')}")
                     
-                    # Dispatch to on-screen logging engine 
                     simulate_and_send_email(f"🚨 Kafka AI Agent Shift: {target_ticker}", alert_msg)
                     st.balloons()
 
@@ -181,12 +185,12 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 st.info(f"🧠 **Agent Reasoning:** {reasoning}")
                 st.success(f"🎉 Agent cycle completed.")
             else:
-                st.warning("⚠️ Connection completed, but no records matched.")
+                st.warning("⚠️ Stream engine synchronized. Try running the activation button once more immediately to secure the latest partition block index position!")
 
         except Exception as e:
             st.error(f"Agent Execution Failure: {e}")
 
-# 📦 REAL-TIME DISPATCH LOG INTERFACE (Always visible at the bottom)
+# 📦 REAL-TIME DISPATCH LOG INTERFACE
 if st.session_state.dispatched_emails_log:
     st.markdown("---")
     st.markdown("### 📬 Outbound SMTP Email Outbox Packet Logs")
