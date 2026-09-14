@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 from confluent_kafka import Producer, Consumer, KafkaError
 
 # 1. Web Page Layout Setup
@@ -7,8 +8,6 @@ st.title("🚀 Kafka Live Stream Engine")
 st.subheader("Welcome, Appala Srinivas!")
 
 # 2. Secret Key Setup (Hybrid Mode)
-# Server and Key come automatically from your Streamlit TOML secrets panel.
-# The API Secret Password will be typed into the UI box by you.
 st.sidebar.header("🔐 Authentication")
 api_secret_input = st.sidebar.text_input(
     "Enter Kafka API Secret (Password):", 
@@ -16,7 +15,6 @@ api_secret_input = st.sidebar.text_input(
     help="Type or paste your Confluent API Secret here."
 )
 
-# Build configuration dictionary dynamically
 def get_kafka_config():
     if not api_secret_input:
         st.sidebar.warning("⚠️ Please enter your API Secret Password to connect.")
@@ -27,7 +25,7 @@ def get_kafka_config():
         'security.protocol': 'SASL_SSL',
         'sasl.mechanisms': 'PLAIN',
         'sasl.username': st.secrets["KAFKA_API_KEY"],
-        'sasl.password': api_secret_input,  # Fed directly from your password input box
+        'sasl.password': api_secret_input,
     }
 
 TOPIC = "topic_0"
@@ -35,7 +33,7 @@ TOPIC = "topic_0"
 # 3. Sidebar Panel: Sending Messages (Producer)
 st.sidebar.markdown("---")
 st.sidebar.header("📥 Produce Message")
-user_message = st.sidebar.text_input("Type a message to send:", "Hello from Streamlit Web!")
+user_message = st.sidebar.text_input("Type a message to send:", "Hackathon Test 1!")
 
 if st.sidebar.button("Send to Kafka Cloud"):
     kafka_config = get_kafka_config()
@@ -47,7 +45,7 @@ if st.sidebar.button("Send to Kafka Cloud"):
                 if err is not None:
                     st.sidebar.error(f"❌ Failed: {err}")
                 else:
-                    st.sidebar.success(f"✅ Sent to topic '{msg.topic()}': Offset {msg.offset()}")
+                    st.sidebar.success(f"✅ Sent to cloud! Offset: {msg.offset()}")
                     
             producer.produce(TOPIC, value=user_message, callback=delivery_report)
             producer.flush()
@@ -56,15 +54,15 @@ if st.sidebar.button("Send to Kafka Cloud"):
 
 # 4. Main Screen Panel: Reading Messages (Consumer)
 st.header("📡 Live Stream Receiver")
-st.write("Click the button below to fetch the latest message sitting in your Confluent Cloud cluster.")
+st.write("Click the button below to fetch messages from your Confluent Cloud cluster.")
 
 if st.button("Check for New Messages"):
     kafka_config = get_kafka_config()
     if kafka_config:
-        # Add consumer specific configurations to the base configuration
         consumer_config = kafka_config.copy()
         consumer_config.update({
-            'group.id': 'streamlit-web-group',
+            # Using timestamp makes the group unique every time to guarantee it reads old messages
+            'group.id': f'streamlit-group-{int(time.time())}',
             'auto.offset.reset': 'earliest'
         })
         
@@ -72,11 +70,11 @@ if st.button("Check for New Messages"):
             consumer = Consumer(consumer_config)
             consumer.subscribe([TOPIC])
             
-            # Poll Kafka for a message (wait up to 3 seconds)
-            msg = consumer.poll(timeout=3.0)
+            # Poll Kafka for a message (wait up to 4 seconds)
+            msg = consumer.poll(timeout=4.0)
             
             if msg is None:
-                st.warning("⚠️ No new messages found in the cluster right now.")
+                st.warning("⚠️ No messages found in the stream right now.")
             elif msg.error():
                 st.error(f"❌ Kafka Error: {msg.error()}")
             else:
