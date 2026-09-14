@@ -1,17 +1,16 @@
 import streamlit as st
+import yfinance as yf
 import json
 import time
-from confluent_kafka import Consumer, KafkaError
+import random
+from confluent_kafka import Producer, Consumer, KafkaError
 
-st.set_page_config(page_title="Kafka Live Market Ticker", layout="wide")
-st.title("📈 Real-Time Multi-Cloud Financial Tracker")
-st.subheader("Welcome, Appala Srinivas! Powered by Apache Kafka & Confluent Cloud")
+# 1. Web Page Layout Setup
+st.set_page_config(page_title="Kafka Dynamic Ticker Engine", layout="centered")
+st.title("📈 Dynamic Real-Time Financial Tracker")
+st.subheader("Welcome, Appala Srinivas!")
 
-# Initialize UI session states for storing incoming data streams
-if "ticker_prices" not in st.session_state:
-    st.session_state.ticker_prices = {"BTC-USD": [], "AAPL": [], "RELIANCE.NS": []}
-
-# 1. Hybrid Password Authentication Setup
+# 2. Secret Key Setup (Hybrid Mode)
 st.sidebar.header("🔐 Authentication")
 api_secret_input = st.sidebar.text_input(
     "Enter Kafka API Secret (Password):", 
@@ -20,7 +19,7 @@ api_secret_input = st.sidebar.text_input(
 
 def get_kafka_config():
     if not api_secret_input:
-        st.sidebar.warning("⚠️ Please provide your API Secret Password to establish streaming tunnels.")
+        st.sidebar.warning("⚠️ Please provide your API Secret Password to connect.")
         return None
     return {
         'bootstrap.servers': st.secrets["KAFKA_BOOTSTRAP_SERVER"],
@@ -28,64 +27,99 @@ def get_kafka_config():
         'sasl.mechanisms': 'PLAIN',
         'sasl.username': st.secrets["KAFKA_API_KEY"],
         'sasl.password': api_secret_input,
+        'socket.timeout.ms': 45000,
+        'session.timeout.ms': 45000,
     }
 
 TOPIC = "topic_0"
 
-# 2. Main Area: Live Metric Cards Layout
-st.markdown("### 📊 Market Live Tickers")
-cols = st.columns(3)
+# 3. Dynamic User Inputs
+st.markdown("### 🔍 Select Asset Target")
+target_ticker = st.text_input("Type any Stock or Crypto Ticker Symbol (e.g., AAPL, BTC-USD, MSFT, INFY):", value="AAPL").upper().strip()
 
-# Display visual placeholders that will hold our streaming data values
-metrics_places = {
-    "BTC-USD": cols[0].empty(),
-    "AAPL": cols[1].empty(),
-    "RELIANCE.NS": cols[2].empty()
-}
-
-# 3. Dynamic Stream Poller Engine
-st.markdown("---")
-st.markdown("### 📡 Live Engine Command Center")
-if st.button("Start Live Data Stream Catching"):
+# 4. Integrated Live Stream Processing Engine
+if st.button(f"⚡ Establish Kafka Tunnel for {target_ticker}"):
     kafka_config = get_kafka_config()
     if kafka_config:
+        # --- PHASE A: PRODUCTION (Fetch data & write to Kafka) ---
+        try:
+            producer = Producer(kafka_config)
+            current_price = None
+            
+            with st.spinner(f"Pulling fresh market positions for {target_ticker}..."):
+                try:
+                    # Attempt to gather live global market updates
+                    stock = yf.Ticker(target_ticker)
+                    data = stock.history(period="1d", interval="1m")
+                    if not data.empty:
+                        current_price = round(data.iloc[-1]['Close'], 2)
+                except Exception:
+                    pass # Fallback will trigger below if market is offline or closed for holiday
+            
+            # If the market is closed for a holiday (like Vinayaka Chavithi), use an intelligent mock baseline
+            if current_price is None:
+                current_price = round(random.uniform(150.0, 2500.0), 2)
+                st.caption(f"ℹ️ Market Holiday/Closed. Running simulated price feed for `{target_ticker}`.")
+
+            payload = {
+                "ticker": target_ticker,
+                "price": current_price,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            }
+
+            # Ship payload directly over the cloud partitions
+            producer.produce(TOPIC, key=target_ticker, value=json.dumps(payload))
+            producer.flush()
+            st.toast(f"✅ Data event broadcasted to Confluent Cluster for {target_ticker}!")
+            
+        except Exception as e:
+            st.error(f"Producer Failure: {e}")
+            st.stop()
+
+        # --- PHASE B: CONSUMPTION (Read data back from Kafka) ---
         consumer_config = kafka_config.copy()
         consumer_config.update({
-            'group.id': f'streamlit-financial-{int(time.time())}',
-            'auto.offset.reset': 'latest' # Catch live numbers streaming right now!
+            'group.id': f'st-dynamic-group-{int(time.time())}',
+            'auto.offset.reset': 'earliest'
         })
-        
+
         try:
             consumer = Consumer(consumer_config)
             consumer.subscribe([TOPIC])
             
-            st.toast("⚡ Handshaking completed. Connected to Confluent Stream Engine!")
-            status_container = st.empty()
+            found_payload = None
+            start_time = time.time()
             
-            # Poll loop running dynamically for 30 cycles to demonstrate live streaming
-            for i in range(30):
-                status_container.write(f"🔄 Actively Polling Kafka Broker Lanes... Cycle {i+1}/30")
-                msg = consumer.poll(timeout=1.0)
-                
-                if msg is not None and not msg.error():
-                    # Parse the incoming JSON event record package sent by data_producer.py
-                    payload = json.loads(msg.value().decode('utf-8'))
-                    ticker = payload["ticker"]
-                    price = payload["price"]
-                    timestamp = payload["timestamp"]
+            with st.spinner("Streaming event records back from Kafka partitions..."):
+                while time.time() - start_time < 5.0:
+                    msg = consumer.poll(timeout=0.5)
+                    if msg is None:
+                        continue
+                    if msg.error():
+                        continue
                     
-                    # Update local application memory states
-                    st.session_state.ticker_prices[ticker].append(price)
-                    
-                    # Render updated metric card live on user screen instantly
-                    metrics_places[ticker].metric(
-                        label=f"🚀 {ticker}", 
-                        value=f"${price:,}" if "BTC" in ticker or "AAPL" in ticker else f"₹{price:,}",
-                        delta=f"Updated: {timestamp.split()[-1]}"
-                    )
-                time.sleep(0.5)
-                
+                    # Look through messages to find the one matching the typed ticker symbol
+                    parsed_payload = json.loads(msg.value().decode('utf-8'))
+                    if parsed_payload.get("ticker") == target_ticker:
+                        found_payload = parsed_payload
+                        # Keep looping to make sure we grab the newest offset position
+            
             consumer.close()
-            status_container.success("✅ Stream monitoring window finished successfully.")
+
+            # --- PHASE C: RENDER TO USER INTERFACE ---
+            st.markdown("---")
+            st.markdown("### 📡 Live Kafka Feed Monitor")
+            if found_payload:
+                st.success(f"🎉 Successfully captured data packet from Confluent Cloud!")
+                
+                # Visual Metric Layout Display
+                st.metric(
+                    label=f"🚀 Ticker: {found_payload['ticker']}", 
+                    value=f"${found_payload['price']:,}", 
+                    delta=f"Log Timestamp: {found_payload['timestamp'].split()[-1]}"
+                )
+            else:
+                st.warning(f"⚠️ Sent successfully, but connection timed out before capturing `{target_ticker}` from the broker partition pool. Please try triggering the tunnel button again!")
+
         except Exception as e:
-            st.error(f"Streaming Interrupted: {e}")
+            st.error(f"Consumer Failure: {e}")
