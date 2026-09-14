@@ -1,13 +1,12 @@
 import streamlit as st
 import time
-from confluent_kafka import Producer, Consumer, KafkaError
+from confluent_kafka import Consumer, KafkaError, Producer
 
 # 1. Web Page Layout Setup
 st.set_page_config(page_title="Kafka Streamlit Engine", layout="centered")
 st.title("🚀 Kafka Live Stream Engine")
 st.subheader("Welcome, Appala Srinivas!")
 
-# Initialize session memory state for messages
 if "status_log" not in st.session_state:
     st.session_state.status_log = []
 
@@ -49,7 +48,7 @@ if st.sidebar.button("Send to Kafka Cloud"):
                 if err is not None:
                     st.session_state.status_log.insert(0, f"❌ Failed to send: {err}")
                 else:
-                    st.session_state.status_log.insert(0, f"✅ Sent successfully! Message: '{user_message}' (Offset: {msg.offset()})")
+                    st.session_state.status_log.insert(0, f"✅ Sent successfully! Message: '{user_message}' (Offset: {msg.offset()} on Partition: {msg.partition()})")
                     
             producer.produce(TOPIC, value=user_message, callback=delivery_report)
             producer.flush()
@@ -59,20 +58,20 @@ if st.sidebar.button("Send to Kafka Cloud"):
 # Display active delivery actions
 if st.session_state.status_log:
     st.info("📨 **Producer Log Activity:**")
-    for log in st.session_state.status_log[:3]: # Show last 3 events
+    for log in st.session_state.status_log[:3]:
         st.write(log)
     st.markdown("---")
 
 # 4. Main Screen Panel: Reading Messages (Consumer)
 st.header("📡 Live Stream Receiver")
-st.write("Click the button below to fetch messages from your Confluent Cloud cluster.")
+st.write("Click the button below to sweep and download all messages sitting in your Confluent Cloud cluster.")
 
 if st.button("Check for New Messages"):
     kafka_config = get_kafka_config()
     if kafka_config:
         consumer_config = kafka_config.copy()
         consumer_config.update({
-            'group.id': f'streamlit-group-{int(time.time())}',
+            'group.id': f'hackathon-sweep-{int(time.time())}', # Fresh group to read history
             'auto.offset.reset': 'earliest'
         })
         
@@ -80,17 +79,41 @@ if st.button("Check for New Messages"):
             consumer = Consumer(consumer_config)
             consumer.subscribe([TOPIC])
             
-            # Poll Kafka for a message (wait up to 4 seconds)
-            msg = consumer.poll(timeout=4.0)
+            all_messages = []
+            start_time = time.time()
             
-            if msg is None:
-                st.warning("⚠️ No messages found in the stream right now.")
-            elif msg.error():
-                st.error(f"❌ Kafka Error: {msg.error()}")
-            else:
-                st.success("🎉 Successfully fetched a message from the cloud!")
-                st.info(f"📩 **Message Content:** {msg.value().decode('utf-8')}")
-                
+            # Spend 4 seconds sweeping across all partitions for data
+            with st.spinner("Sweeping all Kafka partitions..."):
+                while time.time() - start_time < 4.0:
+                    msg = consumer.poll(timeout=0.5)
+                    if msg is None:
+                        continue
+                    if msg.error():
+                        if msg.error().code() == KafkaError._PARTITION_EOF:
+                            continue
+                        else:
+                            st.error(f"❌ Kafka Error: {msg.error()}")
+                            break
+                    
+                    # Store message details
+                    decoded_val = msg.value().decode('utf-8')
+                    all_messages.append({
+                        "text": decoded_val,
+                        "partition": msg.partition(),
+                        "offset": msg.offset()
+                    })
+            
             consumer.close()
+            
+            # 5. Render Results to UI
+            if all_messages:
+                st.success(f"🎉 Successfully fetched {len(all_messages)} messages from the cloud!")
+                
+                # Show them in a clean table or list
+                for index, item in enumerate(all_messages):
+                    st.markdown(f"📦 **[{index+1}] Message:** `{item['text']}` — *(Partition: {item['partition']}, Offset: {item['offset']})*")
+            else:
+                st.warning("⚠️ No messages caught in this sweep window. Try sending a fresh message from the sidebar and check again immediately!")
+                
         except Exception as e:
             st.error(f"Error initializing Consumer: {e}")
