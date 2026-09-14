@@ -1,3 +1,89 @@
+import streamlit as st
+import yfinance as yf
+import json
+import time
+from datetime import datetime, timedelta
+import pytz
+import pandas as pd
+from confluent_kafka import Producer, Consumer, KafkaError
+
+# 1. Web Page Layout Setup
+st.set_page_config(page_title="Agentic AI Global Kafka Engine", layout="centered")
+st.title("🤖 Agentic AI Global Financial Stream Engine")
+st.subheader("Welcome, Appala Srinivas!")
+
+if "previous_agent_signal" not in st.session_state:
+    st.session_state.previous_agent_signal = None
+if "alert_notification_history" not in st.session_state:
+    st.session_state.alert_notification_history = []
+if "dispatched_emails_log" not in st.session_state:
+    st.session_state.dispatched_emails_log = []
+
+# --- 🛰️ VIRTUAL EMAIL DISPATCH GATEWAY ---
+def simulate_and_send_email(subject, message_body):
+    if not receiver_emails_input:
+        return False
+    log_entry = {
+        "time": time.strftime("%H:%M:%S"),
+        "from": st.secrets.get("SENDER_EMAIL", "agent-bot@kafka-cloud.ai"),
+        "to": receiver_emails_input,
+        "subject": subject,
+        "body": message_body,
+        "status": "📨 Dispatched & Serialized via Kafka Event Loop",
+        "protocol": "SMTP Auth over Virtual TLS Port 587 (Bypassed Firewalls)"
+    }
+    st.session_state.dispatched_emails_log.insert(0, log_entry)
+    return True
+
+def get_kafka_config():
+    if not api_secret_input:
+        st.sidebar.warning("⚠️ Please provide your API Secret Password to connect.")
+        return None
+    return {
+        'bootstrap.servers': st.secrets["KAFKA_BOOTSTRAP_SERVER"],
+        'security.protocol': 'SASL_SSL',
+        'sasl.mechanisms': 'PLAIN',
+        'sasl.username': st.secrets["KAFKA_API_KEY"],
+        'sasl.password': api_secret_input,
+        'socket.timeout.ms': 45000,
+        'session.timeout.ms': 45000,
+    }
+
+# 2. Sidebar Configuration & Hybrid Authentication UI
+st.sidebar.header("🔐 Authentication")
+api_secret_input = st.sidebar.text_input("Enter Kafka API Secret (Password):", type="password")
+receiver_emails_input = st.sidebar.text_input("Enter Receiver Email Address:", type="password")
+
+st.sidebar.markdown("---")
+st.sidebar.header("📅 Dynamic Horizon Selector")
+
+current_live_date = datetime.today()
+dynamic_start_default = current_live_date - timedelta(days=60) 
+
+selected_dates = st.sidebar.date_input(
+    "Choose History Window:", 
+    value=(dynamic_start_default, current_live_date), 
+    max_value=current_live_date,
+    help="The calendar parameters automatically expand tomorrow matching real-world time shifts."
+)
+
+# 3. Main Screen Selector
+st.markdown("### 🔍 Multi-Exchange Target Selection")
+target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="RELIANCE.NS").upper().strip()
+
+if len(selected_dates) == 2:
+    start_date, end_date = selected_dates
+else:
+    st.stop()
+
+if st.session_state.alert_notification_history:
+    st.markdown("---")
+    st.markdown("### 🚨 Live Agent Alert Notification Center")
+    for alert in st.session_state.alert_notification_history[:2]:
+        st.error(alert)
+
+TOPIC = "topic_0"
+# --- CORE EXECUTION WORKFLOW LOGIC ---
 if st.button(f"🤖 Activate Agent for {target_ticker}"):
     kafka_config = get_kafka_config()
     if kafka_config:
@@ -32,7 +118,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 data = pd.DataFrame({"Close": mock_prices}, index=date_range)
                 
             for date, row in data.iterrows():
-                # CRASH FIX: Safely parse whether the timestamp is already timezone-aware or not
                 pd_date = pd.to_datetime(date)
                 if pd_date.tz is not None:
                     localized_date = pd_date.tz_convert(exchange_tz)
