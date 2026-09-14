@@ -48,17 +48,15 @@ if st.button(f"⚡ Establish Kafka Tunnel for {target_ticker}"):
             
             with st.spinner(f"Pulling fresh market positions for {target_ticker}..."):
                 try:
-                    # Attempt to gather live global market updates
                     stock = yf.Ticker(target_ticker)
                     data = stock.history(period="1d", interval="1m")
                     if not data.empty:
                         current_price = round(data.iloc[-1]['Close'], 2)
                 except Exception:
-                    pass # Fallback will trigger below if market is offline or closed for holiday
+                    pass 
             
-            # If the market is closed for a holiday (like Vinayaka Chavithi), use an intelligent mock baseline
             if current_price is None:
-                current_price = round(random.uniform(150.0, 2500.0), 2)
+                current_price = round(random.uniform(150.0, 350.0), 2)
                 st.caption(f"ℹ️ Market Holiday/Closed. Running simulated price feed for `{target_ticker}`.")
 
             payload = {
@@ -67,7 +65,6 @@ if st.button(f"⚡ Establish Kafka Tunnel for {target_ticker}"):
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             }
 
-            # Ship payload directly over the cloud partitions
             producer.produce(TOPIC, key=target_ticker, value=json.dumps(payload))
             producer.flush()
             st.toast(f"✅ Data event broadcasted to Confluent Cluster for {target_ticker}!")
@@ -98,11 +95,13 @@ if st.button(f"⚡ Establish Kafka Tunnel for {target_ticker}"):
                     if msg.error():
                         continue
                     
-                    # Look through messages to find the one matching the typed ticker symbol
-                    parsed_payload = json.loads(msg.value().decode('utf-8'))
-                    if parsed_payload.get("ticker") == target_ticker:
-                        found_payload = parsed_payload
-                        # Keep looping to make sure we grab the newest offset position
+                    # SAFETY FILTER: Skip old plain text logs that are not JSON strings
+                    try:
+                        parsed_payload = json.loads(msg.value().decode('utf-8'))
+                        if isinstance(parsed_payload, dict) and parsed_payload.get("ticker") == target_ticker:
+                            found_payload = parsed_payload
+                    except json.JSONDecodeError:
+                        continue # Safely ignore old "Hackathon Test 1!" text data and keep reading
             
             consumer.close()
 
@@ -111,15 +110,13 @@ if st.button(f"⚡ Establish Kafka Tunnel for {target_ticker}"):
             st.markdown("### 📡 Live Kafka Feed Monitor")
             if found_payload:
                 st.success(f"🎉 Successfully captured data packet from Confluent Cloud!")
-                
-                # Visual Metric Layout Display
                 st.metric(
                     label=f"🚀 Ticker: {found_payload['ticker']}", 
                     value=f"${found_payload['price']:,}", 
                     delta=f"Log Timestamp: {found_payload['timestamp'].split()[-1]}"
                 )
             else:
-                st.warning(f"⚠️ Sent successfully, but connection timed out before capturing `{target_ticker}` from the broker partition pool. Please try triggering the tunnel button again!")
+                st.warning(f"⚠️ Sent successfully, but connection timed out before capturing `{target_ticker}` from the broker partition pool. Please click the button again!")
 
         except Exception as e:
             st.error(f"Consumer Failure: {e}")
