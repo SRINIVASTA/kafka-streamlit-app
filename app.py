@@ -25,7 +25,6 @@ api_secret_input = st.sidebar.text_input(
     type="password"
 )
 
-# Target Receiver Email Input on screen, masked like a password field
 receiver_emails_input = st.sidebar.text_input(
     "Enter Receiver Email Address:", 
     type="password",
@@ -50,9 +49,8 @@ def send_email_alert(subject, message_body):
         msg = MIMEText(message_body)
         msg['Subject'] = subject
         msg['From'] = st.secrets["SENDER_EMAIL"]
-        msg['To'] = receiver_emails_input  # Fed directly from your screen input box
+        msg['To'] = receiver_emails_input  
         
-        # Connect to Gmail SMTP Secure Server Port
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(st.secrets["SENDER_EMAIL"], st.secrets["EMAIL_APP_PASSWORD"])
             server.sendmail(st.secrets["SENDER_EMAIL"], [receiver_emails_input], msg.as_string())
@@ -124,7 +122,8 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         try:
             consumer_config = kafka_config.copy()
             consumer_config.update({
-                'group.id': f'agent-group-{int(time.time())}',
+                # Generate a fully randomized consumer group identity to sweep past historic block lags instantly
+                'group.id': f'agent-reinforced-group-{int(time.time())}',
                 'auto.offset.reset': 'earliest'
             })
             
@@ -134,16 +133,22 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             history_pool = []
             start_time = time.time()
             
-            with st.spinner("Agent listening to Kafka stream partitions..."):
-                while time.time() - start_time < 5.0:
+            # Expanded timeout window loop to handle deep partition histories
+            with st.spinner("Agent aggressively sweeping all Kafka partitions..."):
+                while time.time() - start_time < 7.0:
                     msg = consumer.poll(timeout=0.2)
                     if msg is None or msg.error():
                         continue
                     try:
                         parsed_payload = json.loads(msg.value().decode('utf-8'))
-                        if parsed_payload.get("ticker") == target_ticker:
+                        if isinstance(parsed_payload, dict) and parsed_payload.get("ticker") == target_ticker:
                             ts_string = parsed_payload["timestamp"].strip()
-                            payload_date = datetime.strptime(ts_string.split(), "%Y-%m-%d").date()
+                            
+                            if " " in ts_string:
+                                payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
+                            else:
+                                payload_date = datetime.strptime(ts_string, "%Y-%m-%d").date()
+                                
                             if start_date <= payload_date <= end_date:
                                 parsed_payload["timestamp"] = str(payload_date)
                                 history_pool.append(parsed_payload)
@@ -151,7 +156,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         continue
             consumer.close()
 
-            # --- PHASE C: AGENT COGNITION & ACTION (Decision Engine) ---
+            # --- PHASE C: RENDER TO USER INTERFACE ---
             st.markdown("---")
             st.markdown(f"### 📡 AI Agent Execution Dashboard: {target_ticker}")
             
@@ -165,7 +170,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 
                 if latest_price > short_sma and short_sma > long_sma:
                     current_signal = "🟢 STRONG BUY"
-                    reasoning = f"Price (${latest_price}) is trading above short-term average (${round(short_sma, 2)})."
+                    reasoning = f"Price (${latest_price}) is trading above short-term average (${round(short_sma, 2)}), demonstrating clean upward momentum."
                 elif latest_price < short_sma and short_sma < long_sma:
                     current_signal = "🔴 STRONG SELL"
                     reasoning = f"Price has dropped below support lines. Structural downward distribution detected."
@@ -173,13 +178,11 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                     current_signal = "🟡 HOLD"
                     reasoning = f"Asset consolidating sideways near baseline average (${round(long_sma, 2)})."
 
-                # 🔥 TRIGGER AUTOMATED EMAIL NOTIFICATION ON SIGNAL SHIFT
+                # AUTOMATED EMAIL NOTIFICATION ON SIGNAL SHIFT
                 if st.session_state.previous_agent_signal is not None and st.session_state.previous_agent_signal != current_signal:
                     alert_msg = f"🤖 AI Agent Alert: {target_ticker} shifted from {st.session_state.previous_agent_signal} to {current_signal}! Latest Price: ${latest_price}."
-                    
                     st.session_state.alert_notification_history.insert(0, f"⚡ Logged: {alert_msg} at {time.strftime('%H:%M:%S')}")
                     
-                    # Fire Email Gateway
                     if receiver_emails_input:
                         with st.spinner("Dispatching live email alert pipeline..."):
                             email_status = send_email_alert(f"🚨 Kafka AI Agent Shift: {target_ticker}", alert_msg)
@@ -200,7 +203,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 st.info(f"🧠 **Agent Reasoning:** {reasoning}")
                 st.success(f"🎉 Agent cycle completed.")
             else:
-                st.warning("⚠️ Connection completed, but no data records matching parameters were caught.")
+                st.warning("⚠️ Connection completed, but no data records matching parameters were caught. Try running the button again to catch the fresh stream offset position!")
 
         except Exception as e:
             st.error(f"Agent Execution Failure: {e}")
