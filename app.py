@@ -3,13 +3,14 @@ import yfinance as yf
 import json
 import time
 from datetime import datetime, timedelta
+import pytz
 import pandas as pd
 from confluent_kafka import Producer, Consumer, KafkaError
 
 # 1. Web Page Layout Setup
 st.set_page_config(page_title="Agentic AI Global Kafka Engine", layout="centered")
 st.title("🤖 Agentic AI Global Financial Stream Engine")
-st.subheader("Welcome, Appala Srinivas! 🕉️ Happy Vinayaka Chavithi!")
+st.subheader("Welcome, Appala Srinivas!")
 
 if "previous_agent_signal" not in st.session_state:
     st.session_state.previous_agent_signal = None
@@ -54,13 +55,20 @@ api_secret_input = st.sidebar.text_input("Enter Kafka API Secret (Password):", t
 receiver_emails_input = st.sidebar.text_input("Enter Receiver Email Address:", type="password")
 
 st.sidebar.markdown("---")
-st.sidebar.header("📅 Select Date Range")
-default_start = datetime.today() - timedelta(days=60) 
-default_end = datetime.today()
-selected_dates = st.sidebar.date_input("Choose History Horizon:", value=(default_start, default_end), max_value=datetime.today())
+st.sidebar.header("📅 Dynamic Horizon Selector")
+
+current_live_date = datetime.today()
+dynamic_start_default = current_live_date - timedelta(days=60) 
+
+selected_dates = st.sidebar.date_input(
+    "Choose History Window:", 
+    value=(dynamic_start_default, current_live_date), 
+    max_value=current_live_date,
+    help="The calendar parameters automatically expand tomorrow matching real-world time shifts."
+)
 
 # 3. Main Screen Selector
-st.markdown("### 🔍 Global Market Target Selection")
+st.markdown("### 🔍 Multi-Exchange Target Selection")
 target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="RELIANCE.NS").upper().strip()
 
 if len(selected_dates) == 2:
@@ -75,38 +83,47 @@ if st.session_state.alert_notification_history:
         st.error(alert)
 
 TOPIC = "topic_0"
-
 if st.button(f"🤖 Activate Agent for {target_ticker}"):
     kafka_config = get_kafka_config()
     if kafka_config:
+        
+        # --- DYNAMIC EXCHANGE & TIMEZONE DETECTION LAYER ---
+        if ".NS" in target_ticker or ".BO" in target_ticker:
+            exchange_tz = pytz.timezone("Asia/Kolkata")
+            currency_symbol = "₹"
+            exchange_name = "National Stock Exchange of India (NSE) / IST Timezone"
+        else:
+            exchange_tz = pytz.timezone("America/New_York")
+            currency_symbol = "$"
+            exchange_name = "Global Market Exchange / US Eastern Timezone"
         
         # --- PHASE A: GLOBAL HISTORICAL INGESTION (Producer) ---
         try:
             producer = Producer(kafka_config)
             data = pd.DataFrame()
             
-            with st.spinner(f"Agent downloading historical entries for {target_ticker}..."):
+            with st.spinner(f"Agent downloading historical entries from {exchange_name}..."):
                 try:
                     stock = yf.Ticker(target_ticker)
-                    # Pull historical data
                     data = stock.history(start=start_date, end=end_date, interval="1d")
                 except Exception as ex:
                     st.error(f"yfinance Download Error: {ex}")
             
-            # FIXED BUG: Only generate simulated data if there is absolutely NO historical data at all in the database
             if data.empty:
-                st.caption(f"ℹ️ Symbol `{target_ticker}` completely empty. Activating simulation track.")
+                st.caption(f"ℹ️ Symbol `{target_ticker}` unavailable on this date. Generating simulation stream.")
                 date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-                mock_base = 1250.0 if ".NS" in target_ticker else 180.0
+                mock_base = 1250.0 if "₹" in currency_symbol else 180.0
                 mock_prices = [round(mock_base + (i * 1.5), 2) for i in range(len(date_range))]
                 data = pd.DataFrame({"Close": mock_prices}, index=date_range)
                 
-            # Stream all historical rows into Confluent Kafka Cloud
             for date, row in data.iterrows():
+                localized_date = pd.to_datetime(date).tz_localize('UTC').tz_convert(exchange_tz)
                 payload = {
                     "ticker": target_ticker,
                     "price": round(row['Close'], 2),
-                    "timestamp": str(date.date()) 
+                    "timestamp": localized_date.strftime("%Y-%m-%d"),
+                    "currency": currency_symbol,
+                    "exchange": exchange_name
                 }
                 producer.produce(TOPIC, key=target_ticker, value=json.dumps(payload))
             producer.flush()
@@ -119,7 +136,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         try:
             consumer_config = kafka_config.copy()
             consumer_config.update({
-                'group.id': f'agent-global-reinforced-{int(time.time())}',
+                'group.id': f'agent-exchange-group-{int(time.time())}',
                 'auto.offset.reset': 'earliest'
             })
             
@@ -128,7 +145,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             history_pool = []
             start_time = time.time()
             
-            with st.spinner("Agent sweeping Kafka brokers for global data packet offsets..."):
+            with st.spinner("Agent sweeping Kafka broker streams across multi-exchange lanes..."):
                 while time.time() - start_time < 9.0:
                     msg = consumer.poll(timeout=0.2)
                     if msg is None or msg.error():
@@ -137,11 +154,8 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         parsed_payload = json.loads(msg.value().decode('utf-8'))
                         if isinstance(parsed_payload, dict) and parsed_payload.get("ticker") == target_ticker:
                             ts_string = parsed_payload["timestamp"].strip()
-                            
-                            if " " in ts_string:
-                                payload_date = datetime.strptime(ts_string.split()[-1], "%Y-%m-%d").date()
-                            else:
-                                payload_date = datetime.strptime(ts_string, "%Y-%m-%d").date()
+                            cleaned_ts = ts_string.split()[-1] if " " in ts_string else ts_string
+                            payload_date = datetime.strptime(cleaned_ts, "%Y-%m-%d").date()
                                 
                             if start_date <= payload_date <= end_date:
                                 parsed_payload["timestamp"] = str(payload_date)
@@ -153,6 +167,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             # --- PHASE C: RENDER TO USER INTERFACE ---
             st.markdown("---")
             st.markdown(f"### 📡 AI Agent Execution Dashboard: {target_ticker}")
+            st.caption(f"🌎 **Active Operational Node:** `{exchange_name}`")
             
             if history_pool:
                 df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
@@ -162,17 +177,15 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 short_sma = df['price'].rolling(window=min(5, len(df))).mean().iloc[-1]
                 long_sma = df['price'].rolling(window=min(20, len(df))).mean().iloc[-1]
                 
-                currency_symbol = "₹" if ".NS" in target_ticker else "$"
-                
                 if latest_price > short_sma and short_sma > long_sma:
                     current_signal = "🟢 STRONG BUY"
-                    reasoning = f"Price ({currency_symbol}{latest_price}) is trading above short-term support bands."
+                    reasoning = f"Price ({currency_symbol}{latest_price}) is trading above short-term localized support bands."
                 elif latest_price < short_sma and short_sma < long_sma:
                     current_signal = "🔴 STRONG SELL"
-                    reasoning = f"Price dropped below baseline averages. Downward breakout trend confirmed."
+                    reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
                 else:
                     current_signal = "🟡 HOLD"
-                    reasoning = f"Asset moving sideways around baseline average ({currency_symbol}{latest_price})."
+                    reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price})."
 
                 if st.session_state.previous_agent_signal is None:
                     st.session_state.previous_agent_signal = "🟡 HOLD" if current_signal != "🟡 HOLD" else "🟢 STRONG BUY"
@@ -188,10 +201,10 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 # Render Agent Insights to UI
                 st.markdown("#### 🤖 Agent Report Summary")
                 col1, col2 = st.columns(2)
-                col1.metric("Latest Streamed Price", f"{currency_symbol}{latest_price:,}")
+                col1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,}")
                 col2.metric("Agent Action Signal", current_signal)
                 st.info(f"🧠 **Agent Reasoning:** {reasoning}")
-                st.success(f"🎉 Agent global historical tracking completed successfully.")
+                st.success(f"🎉 Dynamic multi-exchange cycle executed successfully.")
             else:
                 st.warning("⚠️ Sync completed, but history pool empty. Try clicking the button again to capture the partitions!")
 
@@ -206,5 +219,4 @@ if st.session_state.dispatched_emails_log:
         with st.expander(f"✉️ Outbound Packet Payload Target: {log['to']} (Timestamp: {log['time']})"):
             st.write(f"**Gateway Status:** `{log['status']}`")
             st.write(f"**Network Layer:** `{log['protocol']}`")
-
             st.text(f"From: {log['from']}\nSubject: {log['subject']}\n\nContent:\n{log['body']}")
