@@ -18,31 +18,11 @@ if "previous_agent_signal" not in st.session_state:
 if "alert_notification_history" not in st.session_state:
     st.session_state.alert_notification_history = []
 
-# 2. Sidebar Configuration & Hybrid Authentication UI
-st.sidebar.header("🔐 Authentication")
-api_secret_input = st.sidebar.text_input(
-    "Enter Kafka API Secret (Password):", 
-    type="password"
-)
-
-receiver_emails_input = st.sidebar.text_input(
-    "Enter Receiver Email Address:", 
-    type="password",
-    help="Type the target email address where the alert should be sent."
-)
-
-st.sidebar.markdown("---")
-st.sidebar.header("📅 Select Date Range")
-default_start = datetime.today() - timedelta(days=60) 
-default_end = datetime.today()
-
-selected_dates = st.sidebar.date_input("Choose History Horizon:", value=(default_start, default_end), max_value=datetime.today())
-
-# --- 🛰️ AUTOMATED EMAIL UTILITY FUNCTION ---
+# --- 🛰️ UPGRADED EMAIL UTILITY FUNCTION (Port 587 TLS) ---
 def send_email_alert(subject, message_body):
-    """Fires real secure emails using Python's SMTP library and Gmail App Tunnels"""
+    """Fires secure emails using TLS Port 587 for cloud container resilience"""
     if not receiver_emails_input:
-        st.sidebar.error("❌ Email transmission aborted: No receiver email provided on screen.")
+        st.error("❌ Email aborted: No receiver email provided on screen.")
         return False
         
     try:
@@ -51,12 +31,19 @@ def send_email_alert(subject, message_body):
         msg['From'] = st.secrets["SENDER_EMAIL"]
         msg['To'] = receiver_emails_input  
         
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(st.secrets["SENDER_EMAIL"], st.secrets["EMAIL_APP_PASSWORD"])
-            server.sendmail(st.secrets["SENDER_EMAIL"], [receiver_emails_input], msg.as_string())
+        # Connect to Gmail SMTP using Port 587 (Standard for web container cloud networks)
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.ehlo()
+        server.starttls() # Secure encryption layer handshake
+        server.ehlo()
+        
+        server.login(st.secrets["SENDER_EMAIL"], st.secrets["EMAIL_APP_PASSWORD"])
+        server.sendmail(st.secrets["SENDER_EMAIL"], [receiver_emails_input], msg.as_string())
+        server.quit()
         return True
     except Exception as e:
-        st.sidebar.error(f"Email Gateway Error: {e}")
+        # Display clear warning on the dashboard if authentication fails
+        st.error(f"📬 SMTP Gateway Debug Error: {e}")
         return False
 
 def get_kafka_config():
@@ -72,6 +59,17 @@ def get_kafka_config():
         'socket.timeout.ms': 45000,
         'session.timeout.ms': 45000,
     }
+
+# 2. Sidebar Configuration & Hybrid Authentication UI
+st.sidebar.header("🔐 Authentication")
+api_secret_input = st.sidebar.text_input("Enter Kafka API Secret (Password):", type="password")
+receiver_emails_input = st.sidebar.text_input("Enter Receiver Email Address:", type="password")
+
+st.sidebar.markdown("---")
+st.sidebar.header("📅 Select Date Range")
+default_start = datetime.today() - timedelta(days=60) 
+default_end = datetime.today()
+selected_dates = st.sidebar.date_input("Choose History Horizon:", value=(default_start, default_end), max_value=datetime.today())
 
 # 3. Main Screen Selector
 st.markdown("### 🔍 Instruct AI Agent")
@@ -122,18 +120,15 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         try:
             consumer_config = kafka_config.copy()
             consumer_config.update({
-                # Generate a fully randomized consumer group identity to sweep past historic block lags instantly
                 'group.id': f'agent-reinforced-group-{int(time.time())}',
                 'auto.offset.reset': 'earliest'
             })
             
             consumer = Consumer(consumer_config)
             consumer.subscribe([TOPIC])
-            
             history_pool = []
             start_time = time.time()
             
-            # Expanded timeout window loop to handle deep partition histories
             with st.spinner("Agent aggressively sweeping all Kafka partitions..."):
                 while time.time() - start_time < 7.0:
                     msg = consumer.poll(timeout=0.2)
@@ -143,12 +138,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         parsed_payload = json.loads(msg.value().decode('utf-8'))
                         if isinstance(parsed_payload, dict) and parsed_payload.get("ticker") == target_ticker:
                             ts_string = parsed_payload["timestamp"].strip()
-                            
-                            if " " in ts_string:
-                                payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
-                            else:
-                                payload_date = datetime.strptime(ts_string, "%Y-%m-%d").date()
-                                
+                            payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
                             if start_date <= payload_date <= end_date:
                                 parsed_payload["timestamp"] = str(payload_date)
                                 history_pool.append(parsed_payload)
@@ -170,7 +160,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 
                 if latest_price > short_sma and short_sma > long_sma:
                     current_signal = "🟢 STRONG BUY"
-                    reasoning = f"Price (${latest_price}) is trading above short-term average (${round(short_sma, 2)}), demonstrating clean upward momentum."
+                    reasoning = f"Price (${latest_price}) is trading above short-term average (${round(short_sma, 2)})."
                 elif latest_price < short_sma and short_sma < long_sma:
                     current_signal = "🔴 STRONG SELL"
                     reasoning = f"Price has dropped below support lines. Structural downward distribution detected."
@@ -178,8 +168,15 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                     current_signal = "🟡 HOLD"
                     reasoning = f"Asset consolidating sideways near baseline average (${round(long_sma, 2)})."
 
-                # AUTOMATED EMAIL NOTIFICATION ON SIGNAL SHIFT
-                if st.session_state.previous_agent_signal is not None and st.session_state.previous_agent_signal != current_signal:
+                # Force notification if this is the very first execution loop
+                if st.session_state.previous_agent_signal is None:
+                    st.session_state.previous_agent_signal = current_signal
+                    # Let's mock a shift for testing on the very first button run!
+                    old_mock_signal = "🟡 HOLD" if current_signal != "🟡 HOLD" else "🟢 STRONG BUY"
+                    st.session_state.previous_agent_signal = old_mock_signal
+
+                # 🔥 AUTOMATED EMAIL NOTIFICATION ON SIGNAL SHIFT
+                if st.session_state.previous_agent_signal != current_signal:
                     alert_msg = f"🤖 AI Agent Alert: {target_ticker} shifted from {st.session_state.previous_agent_signal} to {current_signal}! Latest Price: ${latest_price}."
                     st.session_state.alert_notification_history.insert(0, f"⚡ Logged: {alert_msg} at {time.strftime('%H:%M:%S')}")
                     
@@ -189,7 +186,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                             if email_status:
                                 st.toast(f"📧 Alert email routed cleanly to {receiver_emails_input}!", icon="📬")
                     else:
-                        st.sidebar.warning("⚠️ Signal shifted, but email could not be sent because the input box was blank.")
+                        st.sidebar.warning("⚠️ Signal shifted, but box was blank.")
                             
                     st.balloons()
 
@@ -203,7 +200,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 st.info(f"🧠 **Agent Reasoning:** {reasoning}")
                 st.success(f"🎉 Agent cycle completed.")
             else:
-                st.warning("⚠️ Connection completed, but no data records matching parameters were caught. Try running the button again to catch the fresh stream offset position!")
+                st.warning("⚠️ Connection completed, but no records matched.")
 
         except Exception as e:
             st.error(f"Agent Execution Failure: {e}")
