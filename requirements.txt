@@ -1,3 +1,5 @@
 streamlit
 confluent-kafka
 yfinance
+pandas
+pytz
