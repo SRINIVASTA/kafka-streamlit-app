@@ -7,6 +7,10 @@ st.set_page_config(page_title="Kafka Streamlit Engine", layout="centered")
 st.title("🚀 Kafka Live Stream Engine")
 st.subheader("Welcome, Appala Srinivas!")
 
+# Initialize session memory state for messages
+if "status_log" not in st.session_state:
+    st.session_state.status_log = []
+
 # 2. Secret Key Setup (Hybrid Mode)
 st.sidebar.header("🔐 Authentication")
 api_secret_input = st.sidebar.text_input(
@@ -43,14 +47,21 @@ if st.sidebar.button("Send to Kafka Cloud"):
             
             def delivery_report(err, msg):
                 if err is not None:
-                    st.sidebar.error(f"❌ Failed: {err}")
+                    st.session_state.status_log.insert(0, f"❌ Failed to send: {err}")
                 else:
-                    st.sidebar.success(f"✅ Sent to cloud! Offset: {msg.offset()}")
+                    st.session_state.status_log.insert(0, f"✅ Sent successfully! Message: '{user_message}' (Offset: {msg.offset()})")
                     
             producer.produce(TOPIC, value=user_message, callback=delivery_report)
             producer.flush()
         except Exception as e:
-            st.sidebar.error(f"Error initializing Producer: {e}")
+            st.session_state.status_log.insert(0, f"❌ Error initializing Producer: {e}")
+
+# Display active delivery actions
+if st.session_state.status_log:
+    st.info("📨 **Producer Log Activity:**")
+    for log in st.session_state.status_log[:3]: # Show last 3 events
+        st.write(log)
+    st.markdown("---")
 
 # 4. Main Screen Panel: Reading Messages (Consumer)
 st.header("📡 Live Stream Receiver")
@@ -61,7 +72,6 @@ if st.button("Check for New Messages"):
     if kafka_config:
         consumer_config = kafka_config.copy()
         consumer_config.update({
-            # Using timestamp makes the group unique every time to guarantee it reads old messages
             'group.id': f'streamlit-group-{int(time.time())}',
             'auto.offset.reset': 'earliest'
         })
@@ -78,8 +88,8 @@ if st.button("Check for New Messages"):
             elif msg.error():
                 st.error(f"❌ Kafka Error: {msg.error()}")
             else:
-                st.info("🎉 Successfully fetched a message from the cloud!")
-                st.success(f"📩 **Message Content:** {msg.value().decode('utf-8')}")
+                st.success("🎉 Successfully fetched a message from the cloud!")
+                st.info(f"📩 **Message Content:** {msg.value().decode('utf-8')}")
                 
             consumer.close()
         except Exception as e:
