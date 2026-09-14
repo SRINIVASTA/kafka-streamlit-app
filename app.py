@@ -21,11 +21,9 @@ api_secret_input = st.sidebar.text_input(
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Select Date Range")
 
-# Default historical parameters (from 30 days ago up until today)
 default_start = datetime.today() - timedelta(days=30)
 default_end = datetime.today()
 
-# Streamlit Date Picker inside the Sidebar
 selected_dates = st.sidebar.date_input(
     "Choose History Horizon:",
     value=(default_start, default_end),
@@ -53,7 +51,6 @@ TOPIC = "topic_0"
 st.markdown("### 🔍 Historical Chart Target")
 target_ticker = st.text_input("Type any Ticker (e.g., AAPL, BTC-USD, MSFT):", value="AAPL").upper().strip()
 
-# Make sure user selected a valid start and end tuple before running
 if len(selected_dates) == 2:
     start_date, end_date = selected_dates
     st.sidebar.caption(f"📅 **Query Window:** `{start_date}` to `{end_date}`")
@@ -71,14 +68,12 @@ if st.button(f"📊 Fetch & Stream History for {target_ticker}"):
             
             with st.spinner(f"Pulling rows for {target_ticker} from {start_date} to {end_date}..."):
                 stock = yf.Ticker(target_ticker)
-                # Query historical rows based directly on user's calendar selection
                 data = stock.history(start=start_date, end=end_date, interval="1d")
                 
             if data.empty:
                 st.error(f"❌ No historical market activity found for `{target_ticker}` within that range.")
                 st.stop()
                 
-            # Stream historical log rows chronologically into Kafka
             with st.spinner(f"Streaming {len(data)} data packets into Kafka Cloud..."):
                 for date, row in data.iterrows():
                     payload = {
@@ -116,13 +111,21 @@ if st.button(f"📊 Fetch & Stream History for {target_ticker}"):
                     
                     try:
                         parsed_payload = json.loads(msg.value().decode('utf-8'))
-                        # Filter for the target ticker and ensure date falls inside our query horizon
                         if isinstance(parsed_payload, dict) and parsed_payload.get("ticker") == target_ticker:
-                            payload_date = datetime.strptime(parsed_payload["timestamp"], "%Y-%m-%d").date()
+                            ts_string = parsed_payload["timestamp"].strip()
+                            
+                            # CRASH PROOFING FILTER: Handle timestamps with or without trailing times gracefully
+                            if " " in ts_string:
+                                payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
+                            else:
+                                payload_date = datetime.strptime(ts_string, "%Y-%m-%d").date()
+                                
                             if start_date <= payload_date <= end_date:
+                                # Standardize the output format for the graph
+                                parsed_payload["timestamp"] = str(payload_date)
                                 history_pool.append(parsed_payload)
-                    except json.JSONDecodeError:
-                        continue
+                    except (json.JSONDecodeError, ValueError, KeyError):
+                        continue # Safely skip malformed text packets or unconvertible dates
                         
             consumer.close()
 
@@ -132,14 +135,13 @@ if st.button(f"📊 Fetch & Stream History for {target_ticker}"):
             
             if history_pool:
                 df = pd.DataFrame(history_pool)
-                # Deduplicate and sort values by date cleanly
                 df = df.drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
                 
-                # Render line chart trend module
+                # Render chart
                 st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
                 st.success(f"🎉 Successfully mapped historical trend curves from Confluent Broker logs!")
             else:
-                st.warning(f"⚠️ Connection completed, but no data records matching `{target_ticker}` within that date range were found in the partition logs.")
+                st.warning(f"⚠️ Connection completed, but no data records matching `{target_ticker}` within that date range were caught in this partition window.")
 
         except Exception as e:
             st.error(f"Consumer Failure: {e}")
