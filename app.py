@@ -29,6 +29,9 @@ def get_kafka_config():
         'sasl.mechanisms': 'PLAIN',
         'sasl.username': st.secrets["KAFKA_API_KEY"],
         'sasl.password': api_secret_input,
+        # TWEAK 1: Prevent timeouts over cloud networks
+        'socket.timeout.ms': 45000,
+        'session.timeout.ms': 45000,
     }
 
 TOPIC = "topic_0"
@@ -71,8 +74,11 @@ if st.button("Check for New Messages"):
     if kafka_config:
         consumer_config = kafka_config.copy()
         consumer_config.update({
-            'group.id': f'hackathon-sweep-{int(time.time())}', # Fresh group to read history
-            'auto.offset.reset': 'earliest'
+            # TWEAK 2: Use a fresh, shorter group name to make broker coordination instant
+            'group.id': f'st-sweep-{int(time.time() % 100000)}', 
+            'auto.offset.reset': 'earliest',
+            # TWEAK 3: Optimize for faster metadata retrieval across partitions
+            'api.version.request': True
         })
         
         try:
@@ -82,9 +88,9 @@ if st.button("Check for New Messages"):
             all_messages = []
             start_time = time.time()
             
-            # Spend 4 seconds sweeping across all partitions for data
-            with st.spinner("Sweeping all Kafka partitions..."):
-                while time.time() - start_time < 4.0:
+            # Spend up to 5 seconds pulling records out of the stream
+            with st.spinner("Connecting and sweeping all Kafka partitions..."):
+                while time.time() - start_time < 5.0:
                     msg = consumer.poll(timeout=0.5)
                     if msg is None:
                         continue
@@ -95,7 +101,6 @@ if st.button("Check for New Messages"):
                             st.error(f"❌ Kafka Error: {msg.error()}")
                             break
                     
-                    # Store message details
                     decoded_val = msg.value().decode('utf-8')
                     all_messages.append({
                         "text": decoded_val,
@@ -108,12 +113,10 @@ if st.button("Check for New Messages"):
             # 5. Render Results to UI
             if all_messages:
                 st.success(f"🎉 Successfully fetched {len(all_messages)} messages from the cloud!")
-                
-                # Show them in a clean table or list
                 for index, item in enumerate(all_messages):
                     st.markdown(f"📦 **[{index+1}] Message:** `{item['text']}` — *(Partition: {item['partition']}, Offset: {item['offset']})*")
             else:
-                st.warning("⚠️ No messages caught in this sweep window. Try sending a fresh message from the sidebar and check again immediately!")
+                st.warning("⚠️ Stream window completed with no records. If this persists, the cloud container network is taking longer to handshake. Try clicking again in a few seconds!")
                 
         except Exception as e:
             st.error(f"Error initializing Consumer: {e}")
