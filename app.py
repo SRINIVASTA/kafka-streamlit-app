@@ -69,7 +69,7 @@ selected_dates = st.sidebar.date_input(
 
 # 3. Main Screen Selector
 st.markdown("### 🔍 Multi-Exchange Target Selection")
-target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="RELIANCE.NS").upper().strip()
+target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="AAPL").upper().strip()
 
 if len(selected_dates) == 2:
     start_date, end_date = selected_dates
@@ -99,6 +99,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             exchange_name = "Global Market Exchange / US Eastern Timezone"
         
         # --- PHASE A: GLOBAL HISTORICAL INGESTION (Producer) ---
+        ticker_news = [] # To hold news feeds safely
         try:
             producer = Producer(kafka_config)
             data = pd.DataFrame()
@@ -107,6 +108,8 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 try:
                     stock = yf.Ticker(target_ticker)
                     data = stock.history(start=start_date, end=end_date, interval="1d")
+                    # Dynamically capture real-time breaking market news parameters
+                    ticker_news = stock.news
                 except Exception as ex:
                     st.error(f"yfinance Download Error: {ex}")
             
@@ -211,6 +214,22 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 col2.metric("Agent Action Signal", current_signal)
                 st.info(f"🧠 **Agent Reasoning:** {reasoning}")
                 st.success(f"🎉 Dynamic multi-exchange cycle executed successfully.")
+                
+                # --- NEW: LIVE BREAKING NEWS VISUALIZER SECTION ---
+                st.markdown("---")
+                st.markdown(f"### 📰 Live Breaking News Feed: {target_ticker}")
+                if ticker_news:
+                    # Loop and render top 3 news cards dynamically
+                    for article in ticker_news[:3]:
+                        title = article.get("title", "Market Update")
+                        publisher = article.get("publisher", "Financial News")
+                        link = article.get("link", "#")
+                        st.markdown(f"🔔 **{title}**")
+                        st.caption(f"Source: {publisher} | [Read Full Article]({link})")
+                        st.markdown("")
+                else:
+                    st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
+                    
             else:
                 st.warning("⚠️ Sync completed, but history pool empty. Try clicking the button again to capture the partitions!")
 
