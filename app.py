@@ -17,7 +17,7 @@ api_secret_input = st.sidebar.text_input("Enter Kafka API Secret (Password):", t
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Select Date Range")
-default_start = datetime.today() - timedelta(days=60) # Expanded window for Agent analysis
+default_start = datetime.today() - timedelta(days=60) 
 default_end = datetime.today()
 
 selected_dates = st.sidebar.date_input(
@@ -81,11 +81,13 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
 
         # --- PHASE B: AGENT SCANNING (Consumer) ---
         try:
-            consumer = Consumer(consumer_config := kafka_config.copy())
+            # Create a clean copy and fully apply configurations before initializing the consumer
+            consumer_config = kafka_config.copy()
             consumer_config.update({
                 'group.id': f'agent-group-{int(time.time())}',
                 'auto.offset.reset': 'earliest'
             })
+            
             consumer = Consumer(consumer_config)
             consumer.subscribe([TOPIC])
             
@@ -101,7 +103,12 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         parsed_payload = json.loads(msg.value().decode('utf-8'))
                         if parsed_payload.get("ticker") == target_ticker:
                             ts_string = parsed_payload["timestamp"].strip()
-                            payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
+                            
+                            if " " in ts_string:
+                                payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
+                            else:
+                                payload_date = datetime.strptime(ts_string, "%Y-%m-%d").date()
+                                
                             if start_date <= payload_date <= end_date:
                                 parsed_payload["timestamp"] = str(payload_date)
                                 history_pool.append(parsed_payload)
@@ -116,7 +123,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             if history_pool:
                 df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
                 
-                # Render chart first
+                # Render line chart trend module
                 st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
                 
                 # Agent Intelligence Calculations
@@ -133,7 +140,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 elif latest_price < short_sma and short_sma < long_sma:
                     signal = "🔴 STRONG SELL"
                     confidence = "High (Bearish Breakdown detected)"
-                    reasoning = f"The price has dropped below both key support averages. The agent detects downward heavy distribution."
+                    reasoning = f"The price has dropped below both key support averages. The agent detects heavy downward distribution."
                 else:
                     signal = "🟡 HOLD"
                     confidence = "Medium (Consolidation status)"
@@ -146,11 +153,10 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 col1.metric("Latest Streamed Price", f"${latest_price:,}")
                 col2.metric("Agent Action Signal", signal)
                 
-                # Display reasoning box
                 st.info(f"🧠 **Agent Reasoning:** {reasoning} \n\n🎯 **Confidence Interval:** {confidence}")
-                
+                st.success(f"🎉 Agent run completed successfully!")
             else:
-                st.warning("⚠️ Agent could not fetch clean partition streams.")
+                st.warning("⚠️ Connection completed, but no records matching this date filter window were caught.")
 
         except Exception as e:
             st.error(f"Agent Execution Failure: {e}")
