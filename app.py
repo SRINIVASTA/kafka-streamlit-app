@@ -11,6 +11,12 @@ st.set_page_config(page_title="Agentic AI Kafka Engine", layout="centered")
 st.title("🤖 Agentic AI Financial Stream Engine")
 st.subheader("Welcome, Appala Srinivas!")
 
+# Initialize state memory trackers for tracking signal adjustments
+if "previous_agent_signal" not in st.session_state:
+    st.session_state.previous_agent_signal = None
+if "alert_notification_history" not in st.session_state:
+    st.session_state.alert_notification_history = []
+
 # 2. Sidebar Configuration
 st.sidebar.header("🔐 Authentication")
 api_secret_input = st.sidebar.text_input("Enter Kafka API Secret (Password):", type="password")
@@ -51,6 +57,13 @@ if len(selected_dates) == 2:
 else:
     st.stop()
 
+# Render live alert notifications dashboard at the top if alerts exist
+if st.session_state.alert_notification_history:
+    st.markdown("---")
+    st.markdown("### 🚨 Live Agent Alert Notification Center")
+    for alert in st.session_state.alert_notification_history[:3]: # Show top 3 alerts
+        st.error(alert)
+
 if st.button(f"🤖 Activate Agent for {target_ticker}"):
     kafka_config = get_kafka_config()
     if kafka_config:
@@ -81,7 +94,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
 
         # --- PHASE B: AGENT SCANNING (Consumer) ---
         try:
-            # Create a clean copy and fully apply configurations before initializing the consumer
             consumer_config = kafka_config.copy()
             consumer_config.update({
                 'group.id': f'agent-group-{int(time.time())}',
@@ -105,7 +117,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                             ts_string = parsed_payload["timestamp"].strip()
                             
                             if " " in ts_string:
-                                payload_date = datetime.strptime(ts_string.split()[0], "%Y-%m-%d").date()
+                                payload_date = datetime.strptime(ts_string.split(), "%Y-%m-%d").date()
                             else:
                                 payload_date = datetime.strptime(ts_string, "%Y-%m-%d").date()
                                 
@@ -128,32 +140,40 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 
                 # Agent Intelligence Calculations
                 latest_price = df['price'].iloc[-1]
-                previous_price = df['price'].iloc[-2] if len(df) > 1 else latest_price
                 short_sma = df['price'].rolling(window=min(5, len(df))).mean().iloc[-1]
                 long_sma = df['price'].rolling(window=min(20, len(df))).mean().iloc[-1]
                 
                 # Agent Decision Matrix
                 if latest_price > short_sma and short_sma > long_sma:
-                    signal = "🟢 STRONG BUY"
-                    confidence = "High (Bullish Crossover detected)"
+                    current_signal = "🟢 STRONG BUY"
                     reasoning = f"The current price (${latest_price}) is trading above its short-term average (${round(short_sma, 2)}), demonstrating clean upward momentum."
                 elif latest_price < short_sma and short_sma < long_sma:
-                    signal = "🔴 STRONG SELL"
-                    confidence = "High (Bearish Breakdown detected)"
+                    current_signal = "🔴 STRONG SELL"
                     reasoning = f"The price has dropped below both key support averages. The agent detects heavy downward distribution."
                 else:
-                    signal = "🟡 HOLD"
-                    confidence = "Medium (Consolidation status)"
+                    current_signal = "🟡 HOLD"
                     reasoning = f"The asset is moving sideways. The price is hovering close to its long-term baseline (${round(long_sma, 2)})."
+
+                # AUTOMATED SIGNAL SHIFT DETECTION (The Agentic Notification Layer)
+                if st.session_state.previous_agent_signal is not None and st.session_state.previous_agent_signal != current_signal:
+                    alert_text = f"⚡ **Agent Signal Shift Detected!** {target_ticker} moved from {st.session_state.previous_agent_signal} ➡️ {current_signal} at {time.strftime('%H:%M:%S')}"
+                    # Prepend the new alert to our historical storage array tracker
+                    st.session_state.alert_notification_history.insert(0, alert_text)
+                    # Trigger instant visual browser push alert
+                    st.toast(f"🔔 ALERT: Signal Shifted to {current_signal}!", icon="🔥")
+                    st.balloons() # Visual indicator to capture judges attention instantly
+
+                # Update the baseline state token for subsequent execution loops
+                st.session_state.previous_agent_signal = current_signal
 
                 # Render Agent Insights to UI
                 st.markdown("#### 🤖 Agent Report Summary")
                 
                 col1, col2 = st.columns(2)
                 col1.metric("Latest Streamed Price", f"${latest_price:,}")
-                col2.metric("Agent Action Signal", signal)
+                col2.metric("Agent Action Signal", current_signal)
                 
-                st.info(f"🧠 **Agent Reasoning:** {reasoning} \n\n🎯 **Confidence Interval:** {confidence}")
+                st.info(f"🧠 **Agent Reasoning:** {reasoning}")
                 st.success(f"🎉 Agent run completed successfully!")
             else:
                 st.warning("⚠️ Connection completed, but no records matching this date filter window were caught.")
