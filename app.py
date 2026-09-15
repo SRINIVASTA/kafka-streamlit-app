@@ -99,7 +99,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 date_range = pd.date_range(start=start_date, end=end_date, freq='D')
                 mock_base = 1250.0 if "₹" in currency_symbol else 180.0
                 mock_prices = [round(mock_base + (i * 1.5), 2) for i in range(len(date_range))]
-                data = pd.DataFrame({"Close": mock_prices}, index=date_range)
+                data = pd.DataFrame({"Close": mock_prices, "High": [x*1.02 for x in mock_prices], "Low": [x*0.98 for x in mock_prices]}, index=date_range)
                 
             for date, row in data.iterrows():
                 pd_date = pd.to_datetime(date)
@@ -108,8 +108,8 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 payload = {
                     "ticker": target_ticker,
                     "price": round(float(row['Close']), 2),
-                    "high": round(float(row['High']), 2) if 'High' in row else round(float(row['Close']) * 1.02, 2),
-                    "low": round(float(row['Low']), 2) if 'Low' in row else round(float(row['Close']) * 0.98, 2),
+                    "high": round(float(row['High']), 2) if 'High' in row and not pd.isna(row['High']) else round(float(row['Close']) * 1.02, 2),
+                    "low": round(float(row['Low']), 2) if 'Low' in row and not pd.isna(row['Low']) else round(float(row['Close']) * 0.98, 2),
                     "timestamp": localized_date.strftime("%Y-%m-%d"),
                     "currency": currency_symbol,
                     "exchange": exchange_name
@@ -172,8 +172,12 @@ if target_ticker in st.session_state.stored_history_pool:
     
     if history_pool:
         df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
+        
+        # FIXED: Explicitly coerce all data streams to numeric values to prevent ₹nan errors
         df['price'] = pd.to_numeric(df['price'], errors='coerce')
-        df = df.dropna(subset=['price'])
+        df['high'] = pd.to_numeric(df.get('high', df['price'] * 1.02), errors='coerce')
+        df['low'] = pd.to_numeric(df.get('low', df['price'] * 0.98), errors='coerce')
+        df = df.dropna(subset=['price', 'high', 'low'])
         
         st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
         
@@ -190,8 +194,8 @@ if target_ticker in st.session_state.stored_history_pool:
         rsi_value = 100 - (100 / (1 + rs)) if loss != 0 else 100
         
         # Floor Trader Pivot Point Levels
-        last_high = float(df['high'].iloc[-1]) if 'high' in df.columns else latest_price * 1.01
-        last_low = float(df['low'].iloc[-1]) if 'low' in df.columns else latest_price * 0.99
+        last_high = float(df['high'].iloc[-1])
+        last_low = float(df['low'].iloc[-1])
         pivot_point = (last_high + last_low + latest_price) / 3
         r1_level = (2 * pivot_point) - last_low
         s1_level = (2 * pivot_point) - last_high
@@ -311,7 +315,7 @@ if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}...")
                 except Exception as err:
                     reply_text = f"⚠️ Failed to parse corporate entries pipeline: {err}"
         elif "pivot" in user_query or "resistance" in user_query or "support" in user_query:
-            reply_text = f"📊 **Pivot Level Mathematical Explanation for {target_ticker}:**\n\nMy engine runs the standard Floor Trader Volatility Formula to calculate floor lines. Resistance layers (R1/R2) represent high-volume target ceilings where sellers historically supply liquidity, while Support levels (S1/S2) reflect price target floors where buying buyers frequently step in to defend momentum."
+            reply_text = f"📊 **Pivot Level Mathematical Explanation for {target_ticker}:**\n\nMy engine runs the standard Floor Trader Volatility Formula to calculate floor lines. Resistance layers (R1/R2) represent high-volume target ceilings where sellers historically supply liquidity, while Support levels (S1/S2) reflect price target floors where buyers frequently step in to defend momentum."
         else:
             reply_text = f"I am actively tracking the Kafka topic streams for **{target_ticker}**. The moving averages suggest a trend confirmation aligned with the current signal."
             
