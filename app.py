@@ -66,7 +66,7 @@ def send_user_message(prompt, current_ticker, current_tf):
 # 3. INTERFACE WORKSPACE RENDERING
 # =====================================================================
 if KAFKA_CONFIG:
-    col1, col2 = st.columns()
+    col1, col2 = st.columns(2)
 
     # --- LEFT PANEL: CONVERSATION STREAM ---
     with col1:
