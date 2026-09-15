@@ -244,13 +244,14 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         except Exception as e:
             st.error(f"Agent Execution Failure: {e}")
 # --- NEW: ISOLATED CHAT INTERFACE AREA (SCRIP SPECIFIC) ---
+# --- UPDATED: INTELLIGENT CHAT INTERFACE AREA (SCRIP SPECIFIC) ---
 st.markdown("---")
 st.markdown(f"### 💬 Interactive AI Agent Chat Messenger: {target_ticker}")
 
 # Create isolated memory array for the specified target ticker
 if target_ticker not in st.session_state.chat_conversations_log:
     st.session_state.chat_conversations_log[target_ticker] = [
-        {"role": "assistant", "content": f"Hello! Ask me any analysis question about the charts, technical trends, or broker events for {target_ticker}."}
+        {"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or charts for {target_ticker}."}
     ]
 
 # Render the active dialog log contents
@@ -266,9 +267,38 @@ if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}...")
         
     # Generate automated agent assistant context responses
     with st.chat_message("assistant"):
-        placeholder_reply = f"I am reviewing the data points for **{target_ticker}**. The moving averages suggest a trend confirmation aligned with the current signal."
-        st.write(placeholder_reply)
-    st.session_state.chat_conversations_log[target_ticker].append({"role": "assistant", "content": placeholder_reply})
+        user_query = chat_prompt.lower()
+        
+        # Check if the user is asking about corporate actions, splits, or dividends
+        if "corporate action" in user_query or "split" in user_query or "dividend" in user_query:
+            with st.spinner("Fetching corporate actions database records..."):
+                try:
+                    stock_obj = yf.Ticker(target_ticker)
+                    # Pull corporate actions history dataframe
+                    actions_df = stock_obj.actions
+                    
+                    if actions_df is not None and not actions_df.empty:
+                        # Grab the latest 3 entries to keep display clean
+                        latest_actions = actions_df.tail(3).sort_index(ascending=False)
+                        
+                        reply_text = f"📋 **Recent Corporate Actions recorded for {target_ticker}:**\n\n"
+                        for idx, row in latest_actions.iterrows():
+                            date_str = idx.strftime('%Y-%m-%d')
+                            if row['Stock Splits'] > 0:
+                                reply_text += f"▪️ **{date_str}:** Stock Split Ratio of **{row['Stock Splits']}**\n"
+                            if row['Dividends'] > 0:
+                                reply_text += f"▪️ **{date_str}:** Cash Dividend Payout of **{row['Dividends']}**\n"
+                    else:
+                        reply_text = f"ℹ️ No recent corporate actions (splits or dividends) found in the public database for **{target_ticker}**."
+                except Exception as err:
+                    reply_text = f"⚠️ Failed to parse corporate entries pipeline: {err}"
+        else:
+            # Standard structural fallback message for general baseline chart questions
+            reply_text = f"I am reviewing the data points for **{target_ticker}**. The moving averages suggest a trend confirmation aligned with the current signal."
+            
+        st.write(reply_text)
+        
+    st.session_state.chat_conversations_log[target_ticker].append({"role": "assistant", "content": reply_text})
 
 
 # 📦 REAL-TIME DISPATCH LOG INTERFACE
