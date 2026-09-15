@@ -76,11 +76,18 @@ if len(selected_dates) == 2:
 else:
     st.stop()
 
+# --- FIXED: Only show the alerts matching the currently entered scrip ---
 if st.session_state.alert_notification_history:
-    st.markdown("---")
-    st.markdown("### 🚨 Live Agent Alert Notification Center")
-    for alert in st.session_state.alert_notification_history[:2]:
-        st.error(alert)
+    # Filter log entries that contain the exact current target ticker
+    filtered_alerts = [
+        alert for alert in st.session_state.alert_notification_history 
+        if f" {target_ticker} " in alert
+    ]
+    if filtered_alerts:
+        st.markdown("---")
+        st.markdown(f"### 🚨 Live Agent Alert Notification Center ({target_ticker})")
+        for alert in filtered_alerts[:2]:
+            st.error(alert)
 
 TOPIC = "topic_0"
 # --- CORE EXECUTION WORKFLOW LOGIC ---
@@ -109,7 +116,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                     stock = yf.Ticker(target_ticker)
                     data = stock.history(start=start_date, end=end_date, interval="1d")
                     
-                    # Clean up split adjustments and non-numeric fields immediately
                     if not data.empty:
                         data = data.dropna(subset=['Close'])
                         
@@ -185,7 +191,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             if history_pool:
                 df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
                 
-                # Double-verify formatting cleanup to clear out any leftover 'nan' rows before modeling
                 df['price'] = pd.to_numeric(df['price'], errors='coerce')
                 df = df.dropna(subset=['price'])
                 
@@ -230,10 +235,8 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 if ticker_news:
                     for article in ticker_news[:3]:
                         content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
-                        
                         title = content_data.get("title", article.get("title", "Market Update"))
                         
-                        # Fix nested dictionary provider names for publisher output
                         raw_pub = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
                         if isinstance(raw_pub, dict):
                             publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News"))
@@ -256,10 +259,16 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
 
 # 📦 REAL-TIME DISPATCH LOG INTERFACE
 if st.session_state.dispatched_emails_log:
-    st.markdown("---")
-    st.markdown("### 📬 Outbound SMTP Email Outbox Packet Logs")
-    for log in st.session_state.dispatched_emails_log[:2]:
-        with st.expander(f"✉️ Outbound Packet Payload Target: {log['to']} (Timestamp: {log['time']})"):
-            st.write(f"**Gateway Status:** `{log['status']}`")
-            st.write(f"**Network Layer:** `{log['protocol']}`")
-            st.text(f"From: {log['from']}\nSubject: {log['subject']}\n\nContent:\n{log['body']}")
+    # Filter the email history logs to only display elements matching the current active scrip
+    filtered_emails = [
+        log for log in st.session_state.dispatched_emails_log 
+        if f": {target_ticker}" in log.get("subject", "")
+    ]
+    if filtered_emails:
+        st.markdown("---")
+        st.markdown(f"### 📬 Outbound SMTP Email Outbox Packet Logs ({target_ticker})")
+        for log in filtered_emails[:2]:
+            with st.expander(f"✉️ Outbound Packet Payload Target: {log['to']} (Timestamp: {log['time']})"):
+                st.write(f"**Gateway Status:** `{log['status']}`")
+                st.write(f"**Network Layer:** `{log['protocol']}`")
+                st.text(f"From: {log['from']}\nSubject: {log['subject']}\n\nContent:\n{log['body']}")
