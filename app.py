@@ -34,7 +34,7 @@ def get_kafka_config():
         'sasl.mechanisms': 'PLAIN',
         'sasl.username': st.secrets["KAFKA_API_KEY"],
         'sasl.password': api_secret_input,
-        'socket.timeout.ms': 45000,
+        'socket.timeout.ms': 60000, # Expanded connection timeouts
         'session.timeout.ms': 45000,
     }
 
@@ -123,8 +123,9 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         # --- PHASE B: AGENT SCANNING (Consumer) ---
         try:
             consumer_config = kafka_config.copy()
+            # Pinned a persistent tracking group key to keep partition alignments warm
             consumer_config.update({
-                'group.id': f'agent-exchange-group-{int(time.time())}',
+                'group.id': f'agent-finance-group-v2',
                 'auto.offset.reset': 'earliest'
             })
             consumer = Consumer(consumer_config)
@@ -133,8 +134,9 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             start_time = time.time()
             
             with st.spinner("Agent sweeping Kafka broker streams across multi-exchange lanes..."):
-                while time.time() - start_time < 9.0:
-                    msg = consumer.poll(timeout=0.2)
+                # Expanded loop constraint to allow broker handshake negotiation to settle
+                while time.time() - start_time < 12.0:
+                    msg = consumer.poll(timeout=0.5)
                     if msg is None or msg.error():
                         continue
                     try:
@@ -178,7 +180,6 @@ if target_ticker in st.session_state.stored_history_pool:
         df['low'] = pd.to_numeric(df.get('low', df['price'] * 0.98), errors='coerce')
         df = df.dropna(subset=['price', 'high', 'low'])
         
-        # --- FIXED: Added safety block to handle empty datasets elegantly ---
         if not df.empty:
             st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
             
@@ -279,7 +280,13 @@ if target_ticker in st.session_state.stored_history_pool:
             else:
                 st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
         else:
-            st.warning("⚠️ Sync completed, but history pool empty. Try clicking the button again to capture the partitions!")
+            st.warning("⚠️ Sync completed, but history pool empty. Click the button again to force capture partition data!")
+            if st.button("🔄 Force Refresh Partition Read"):
+                st.rerun()
+    else:
+        st.warning("⚠️ Sync completed, but history pool empty. Click the button again to force capture partition data!")
+        if st.button("🔄 Force Refresh Partition Read"):
+            st.rerun()
 # --- INTERACTIVE CHAT INTERFACE AREA ---
 st.markdown("---")
 st.markdown(f"### 💬 Interactive AI Agent Chat Messenger: {target_ticker}")
