@@ -22,7 +22,7 @@ if "dispatched_emails_log" not in st.session_state:
 if "chat_conversations_log" not in st.session_state:
     st.session_state.chat_conversations_log = {}
 
-# --- FIXED: Persistent Storage for Streaming Data Layout components ---
+# Persistent Storage for Streaming Data Layout components
 if "stored_history_pool" not in st.session_state:
     st.session_state.stored_history_pool = {}
 if "stored_ticker_news" not in st.session_state:
@@ -76,7 +76,6 @@ selected_dates = st.sidebar.date_input(
 )
 
 # Main Screen Selector
-st.markdown("### 🔍 Multi-Exchange Target Selection")
 target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="HFCL.NS").upper().strip()
 
 if len(selected_dates) == 2:
@@ -98,7 +97,6 @@ TOPIC = "topic_0"
 if st.button(f"🤖 Activate Agent for {target_ticker}"):
     kafka_config = get_kafka_config()
     if kafka_config:
-        
         if ".NS" in target_ticker or ".BO" in target_ticker:
             exchange_tz = pytz.timezone("Asia/Kolkata")
             currency_symbol = "₹"
@@ -179,7 +177,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         continue
             consumer.close()
 
-            # --- FIXED: Commit extracted parameters directly to memory arrays ---
             st.session_state.stored_history_pool[target_ticker] = history_pool
             st.session_state.stored_ticker_news[target_ticker] = ticker_news
 
@@ -206,30 +203,54 @@ if target_ticker in st.session_state.stored_history_pool:
         
         st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
         
+        # Calculate Technical Indicators
         latest_price = float(df['price'].iloc[-1])
         short_sma = float(df['price'].rolling(window=min(5, len(df))).mean().iloc[-1])
         long_sma = float(df['price'].rolling(window=min(20, len(df))).mean().iloc[-1])
         
+        # Rule-Based RSI Tracking Loop
+        delta = df['price'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=min(14, len(df))).mean().iloc[-1]
+        loss = (-delta.where(delta < 0, 0)).rolling(window=min(14, len(df))).mean().iloc[-1]
+        rs = gain / loss if loss != 0 else 0
+        rsi_value = 100 - (100 / (1 + rs)) if loss != 0 else 100
+        
         if latest_price > short_sma and short_sma > long_sma:
             current_signal = "🟢 STRONG BUY"
             reasoning = f"Price ({currency_symbol}{latest_price:.2f}) is trading above short-term localized support bands."
+            if rsi_value > 70:
+                reasoning += f" ⚠️ WARNING: RSI measures overbought ({rsi_value:.1f}). Overextension risk present."
         elif latest_price < short_sma and short_sma < long_sma:
             current_signal = "🔴 STRONG SELL"
             reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
+            if rsi_value < 30:
+                reasoning += f" 💡 NOTE: RSI measures oversold ({rsi_value:.1f}). Technical bounce potential noted."
         else:
             current_signal = "🟡 HOLD"
             reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price:.2f})."
 
         st.markdown("#### 🤖 Agent Report Summary")
-        col1, col2 = st.columns(2)
-        col1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
-        col2.metric("Agent Action Signal", current_signal)
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
+        col_m2.metric("Agent Action Signal", current_signal)
+        col_m3.metric("RSI Value (14 Days)", f"{rsi_value:.1f}")
         st.info(f"🧠 **Agent Reasoning:** {reasoning}")
         
-        # --- ADVANCED LIVE NEWS SENTIMENT PROCESSING ---
+        # Simulated Order Panel Insertion Area
+        st.markdown("#### ⚡ Programmatic Order Execution Gateway")
+        with st.expander("💼 Route Order Payload Directly to Exchange Broker Gateway"):
+            col_trade_1, col_trade_2 = st.columns(2)
+            shares_count = col_trade_1.number_input("Order Share Volume Size:", min_value=1, value=10, step=1)
+            total_est_cost = shares_count * latest_price
+            col_trade_2.markdown(f"**Total Transaction Exposure Value:**\n### {currency_symbol}{total_est_cost:,.2f}")
+            
+            if st.button(f"⚡ Dispatched Webhook Target Order Entry for {target_ticker}"):
+                trade_payload = {"action": "BUY" if "BUY" in current_signal else "SELL", "ticker": target_ticker, "volume": shares_count, "execution_price": latest_price, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")}
+                st.success(f"📨 Serialized Trade Entry Order Package transmitted successfully: {json.dumps(trade_payload)}")
+        
+        # Real-Time Sentiment Streaming Feeds
         st.markdown("---")
         st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker}")
-        
         bullish_words = {"growth", "profit", "expand", "dividend", "bonus", "buy", "surge", "acquisition", "unveils", "rise", "positive", "partnership"}
         bearish_words = {"drop", "sluggish", "deficit", "breach", "backlash", "shutters", "risk", "sell", "decline", "fall", "investigating", "protest", "loss"}
         
@@ -248,22 +269,18 @@ if target_ticker in st.session_state.stored_history_pool:
                 sentiment_score = 0.0 if total_tokens == 0 else round((bullish_count - bearish_count) / total_tokens, 2)
                 
                 badge, color = ("📈 BULLISH", "green") if sentiment_score > 0 else (("📉 BEARISH", "red") if sentiment_score < 0 else ("⚖️ NEUTRAL", "gray"))
-                    
                 st.markdown(f"🔔 **{title}**")
                 col_news_a, col_news_b = st.columns(2)
                 col_news_a.caption(f"Source: {publisher} | [Read Full Article]({link})")
                 col_news_b.markdown(f":{color}[**{badge} ({sentiment_score:+.1f})**]")
         else:
             st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
-
 # --- INTERACTIVE CHAT INTERFACE AREA ---
 st.markdown("---")
 st.markdown(f"### 💬 Interactive AI Agent Chat Messenger: {target_ticker}")
 
 if target_ticker not in st.session_state.chat_conversations_log:
-    st.session_state.chat_conversations_log[target_ticker] = [
-        {"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or live sentiment metrics for {target_ticker}."}
-    ]
+    st.session_state.chat_conversations_log[target_ticker] = [{"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or live sentiment metrics for {target_ticker}."}]
 
 for msg in st.session_state.chat_conversations_log[target_ticker]:
     with st.chat_message(msg["role"]):
@@ -304,7 +321,7 @@ if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}...")
     st.session_state.chat_conversations_log[target_ticker].append({"role": "assistant", "content": reply_text})
     st.rerun()
 
-# 📦 REAL-TIME DISPATCH LOG INTERFACE
+# Real-Time Outbound Packet Logs Window
 if st.session_state.dispatched_emails_log:
     filtered_emails = [log for log in st.session_state.dispatched_emails_log if f": {target_ticker}" in log.get("subject", "")]
     if filtered_emails:
@@ -312,6 +329,5 @@ if st.session_state.dispatched_emails_log:
         st.markdown(f"### 📬 Outbound SMTP Email Outbox Packet Logs ({target_ticker})")
         for log in filtered_emails[:2]:
             with st.expander(f"✉️ Outbound Packet Payload Target: {log['to']} (Timestamp: {log['time']})"):
-                st.write(f"**Gateway Status:** `{log['status']}`")
-                st.write(f"**Network Layer:** `{log['protocol']}`")
+                st.write(f"**Gateway Status:** `{log['status']}`\n**Network Layer:** `{log['protocol']}`")
                 st.text(f"From: {log['from']}\nSubject: {log['subject']}\n\nContent:\n{log['body']}")
