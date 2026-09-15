@@ -228,11 +228,12 @@ if target_ticker in st.session_state.stored_history_pool:
                     publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News")) if isinstance(raw_pub, dict) else str(raw_pub)
                     link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
                     
-                    # --- FIXED: Extract and format publication date correctly ---
-                    pub_time_raw = article.get("providerPublishTime", content_data.get("pubDate", None))
+                    # --- FIXED: Check both root and nested sub-dictionary for the correct timestamp ---
+                    pub_time_raw = article.get("providerPublishTime", content_data.get("providerPublishTime", content_data.get("pubDate", None)))
+                    
                     if pub_time_raw:
                         try:
-                            # Convert epoch seconds timestamp into a clean date string
+                            # Convert epoch seconds timestamp safely into a human-readable date string
                             pub_date_str = datetime.fromtimestamp(int(pub_time_raw)).strftime('%b %d, %Y | %H:%M')
                         except Exception:
                             pub_date_str = "Recent News"
@@ -249,7 +250,7 @@ if target_ticker in st.session_state.stored_history_pool:
                     news_count += 1
                     
                     badge, color = ("📈 BULLISH", "green") if score > 0 else (("📉 BEARISH", "red") if score < 0 else ("⚖️ NEUTRAL", "gray"))
-                    # Pack formatted publication date into rendering list array tuple
+                    # Pack verified formatted publication date into rendering array tuple
                     news_rendered_list.append((title, publisher, link, badge, color, score, pub_date_str))
             
             avg_sentiment = round(net_news_score / news_count, 2) if news_count > 0 else 0.0
@@ -283,7 +284,7 @@ if target_ticker in st.session_state.stored_history_pool:
             st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker} (Avg Mood: {avg_sentiment:+.2f})")
             if news_rendered_list:
                 for item in news_rendered_list:
-                    # Render formatted publication time label upfront before the title text block
+                    # Render verified formatted publication time label upfront from index item [6]
                     st.caption(f"🗓️ Published: {item[6]}")
                     st.markdown(f"🔔 **{item[0]}**")
                     col_n_a, col_n_b = st.columns(2)
