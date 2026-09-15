@@ -87,13 +87,25 @@ if KAFKA_CONFIG:
     with col2:
         st.subheader("📈 Dynamic Analytics Pipeline")
         
+        # 1. UI Control Configuration Elements
         st.session_state.active_ticker = st.text_input("Active Ticker Token:", value=st.session_state.active_ticker).upper()
-        st.session_state.active_tf = st.selectbox("Active Window Scale:", ["1d", "5d", "1mo", "3mo", "6mo", "1y", "5y", "10y"], index=0)
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.session_state.active_tf = st.selectbox("Active Window Scale:", ["1d", "5d", "1mo", "3mo", "6mo", "1y", "5y", "10y"], index=5)
+        with c2:
+            # New indicator selector widget adding technical analytical layers
+            technical_indicator = st.selectbox("Technical Analysis Overlay:", ["None", "20-Day SMA", "50-Day EMA"])
 
-        # Plotly Telemetry Graph Execution Box
+        # 2. Interactive Plotly Graphic Assembly 
         if st.session_state.active_ticker:
             try:
+                import yfinance as yf
+                import plotly.graph_objects as go
+                
                 stock_engine = yf.Ticker(st.session_state.active_ticker)
+                
+                # Fetch baseline timeframe tracking metrics
                 if st.session_state.active_tf == "1d":
                     df = stock_engine.history(period="1d", interval="5m")
                 elif st.session_state.active_tf == "5d":
@@ -102,58 +114,43 @@ if KAFKA_CONFIG:
                     df = stock_engine.history(period=st.session_state.active_tf)
                 
                 if not df.empty:
+                    # Strip out explicit timezone offsets to maintain rendering stability
                     if df.index.tz is not None:
                         df.index = df.index.tz_localize(None)
 
                     fig = go.Figure()
+                    
+                    # Primary Asset Close Path Trace
                     fig.add_trace(go.Scatter(
                         x=df.index, y=df['Close'], mode='lines', 
-                        name=st.session_state.active_ticker,
+                        name=f"{st.session_state.active_ticker} Close",
                         line=dict(color='#00bc8c', width=2),
                         fill='tozeroy' if st.session_state.active_tf in ["1d", "5d"] else None,
                         fillcolor='rgba(0, 188, 140, 0.08)'
                     ))
+                    
+                    # Programmatic Technical Trend Calculations (Applied dynamically if enough rows exist)
+                    if technical_indicator == "20-Day SMA" and len(df) >= 20:
+                        df['SMA20'] = df['Close'].rolling(window=20).mean()
+                        fig.add_trace(go.Scatter(
+                            x=df.index, y=df['SMA20'], mode='lines',
+                            name="20 SMA", line=dict(color='#f39c12', width=1.5, dash='dash')
+                        ))
+                    elif technical_indicator == "50-Day EMA" and len(df) >= 50:
+                        df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+                        fig.add_trace(go.Scatter(
+                            x=df.index, y=df['EMA50'], mode='lines',
+                            name="50 EMA", line=dict(color='#e74c3c', width=1.5, dash='dot')
+                        ))
+
                     fig.update_layout(
-                        title=f"{st.session_state.active_ticker} Performance History ({st.session_state.active_tf})",
+                        title=f"{st.session_state.active_ticker} Telemetry Window ({st.session_state.active_tf})",
                         template="plotly_dark",
-                        xaxis_title="Timeline Window", yaxis_title="Close Price",
-                        margin=dict(l=15, r=15, t=35, b=15), height=340
+                        xaxis_title="Timeline Axis", yaxis_title="Price Metrics",
+                        margin=dict(l=15, r=15, t=35, b=15), height=360
                     )
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning(f"No asset trends discovered for ticker target: '{st.session_state.active_ticker}'")
             except Exception as chart_err:
-                st.error(f"Visualizer Error: {str(chart_err)}")
-
-        # =====================================================================
-        # ✅ THE FRAGMENT ASYNCHRONOUS BACKGROUND LISTENER
-        # =====================================================================
-        @st.fragment(run_every="1s")
-        def check_for_kafka_replies():
-            if st.session_state.awaiting_response:
-                try:
-                    consumer = Consumer({
-                        **KAFKA_CONFIG,
-                        'group.id': 'streamlit-cloud-group',
-                        'auto.offset.reset': 'latest',
-                        'enable.auto.commit': True
-                    })
-                    consumer.subscribe(['stock-results'])
-                    
-                    msg = consumer.poll(timeout=0.1)
-                    if msg is not None and not msg.error():
-                        response_data = json.loads(msg.value().decode('utf-8'))
-                        
-                        # Inject backend worker payload data into session state maps
-                        st.session_state.chat_history.append({"role": "assistant", "text": response_data["agent_reply"]})
-                        st.session_state.active_ticker = response_data["updated_ticker"]
-                        st.session_state.active_tf = response_data["updated_tf"]
-                        st.session_state.awaiting_response = False
-                        consumer.close()
-                        st.rerun()
-                    consumer.close()
-                except Exception:
-                    pass
-
-        # Spin up the background tracking block fragment
-        check_for_kafka_replies()
-else:
-    st.info("👋 Enter your Kafka API Secret in the sidebar panel to unlock the live workspace terminal window.")
+                st.error(f"Visualizer compilation fault: {str(chart_err)}")
