@@ -34,7 +34,7 @@ def get_kafka_config():
         'sasl.mechanisms': 'PLAIN',
         'sasl.username': st.secrets["KAFKA_API_KEY"],
         'sasl.password': api_secret_input,
-        'socket.timeout.ms': 60000, # Expanded connection timeouts
+        'socket.timeout.ms': 60000,
         'session.timeout.ms': 45000,
     }
 
@@ -57,7 +57,7 @@ selected_dates = st.sidebar.date_input(
 
 # Main Screen Selector
 st.markdown("### 🔍 Multi-Exchange Target Selection")
-target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="HFCL.NS").upper().strip()
+target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="RELIANCE.NS").upper().strip()
 
 if len(selected_dates) == 2:
     start_date, end_date = selected_dates
@@ -123,7 +123,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         # --- PHASE B: AGENT SCANNING (Consumer) ---
         try:
             consumer_config = kafka_config.copy()
-            # Pinned a persistent tracking group key to keep partition alignments warm
             consumer_config.update({
                 'group.id': f'agent-finance-group-v2',
                 'auto.offset.reset': 'earliest'
@@ -134,7 +133,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             start_time = time.time()
             
             with st.spinner("Agent sweeping Kafka broker streams across multi-exchange lanes..."):
-                # Expanded loop constraint to allow broker handshake negotiation to settle
                 while time.time() - start_time < 12.0:
                     msg = consumer.poll(timeout=0.5)
                     if msg is None or msg.error():
@@ -230,6 +228,17 @@ if target_ticker in st.session_state.stored_history_pool:
                     publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News")) if isinstance(raw_pub, dict) else str(raw_pub)
                     link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
                     
+                    # --- FIXED: Extract and format publication date correctly ---
+                    pub_time_raw = article.get("providerPublishTime", content_data.get("pubDate", None))
+                    if pub_time_raw:
+                        try:
+                            # Convert epoch seconds timestamp into a clean date string
+                            pub_date_str = datetime.fromtimestamp(int(pub_time_raw)).strftime('%b %d, %Y | %H:%M')
+                        except Exception:
+                            pub_date_str = "Recent News"
+                    else:
+                        pub_date_str = "Recent News"
+                    
                     tokens = title.lower().split()
                     b_c = sum(1 for t in tokens if any(bw in t for bw in bullish_words))
                     br_c = sum(1 for t in tokens if any(brw in t for brw in bearish_words))
@@ -240,7 +249,8 @@ if target_ticker in st.session_state.stored_history_pool:
                     news_count += 1
                     
                     badge, color = ("📈 BULLISH", "green") if score > 0 else (("📉 BEARISH", "red") if score < 0 else ("⚖️ NEUTRAL", "gray"))
-                    news_rendered_list.append((title, publisher, link, badge, color, score))
+                    # Pack formatted publication date into rendering list array tuple
+                    news_rendered_list.append((title, publisher, link, badge, color, score, pub_date_str))
             
             avg_sentiment = round(net_news_score / news_count, 2) if news_count > 0 else 0.0
             
@@ -273,10 +283,13 @@ if target_ticker in st.session_state.stored_history_pool:
             st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker} (Avg Mood: {avg_sentiment:+.2f})")
             if news_rendered_list:
                 for item in news_rendered_list:
+                    # Render formatted publication time label upfront before the title text block
+                    st.caption(f"🗓️ Published: {item[6]}")
                     st.markdown(f"🔔 **{item[0]}**")
                     col_n_a, col_n_b = st.columns(2)
                     col_n_a.caption(f"Source: {item[1]} | [Read Full Article]({item[2]})")
                     col_n_b.markdown(f":{item[4]}[**{item[3]} ({item[5]:+.1f})**]")
+                    st.markdown("---")
             else:
                 st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
         else:
