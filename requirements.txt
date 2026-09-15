@@ -3,3 +3,4 @@ google-genai
 yfinance
 pydantic
 confluent-kafka
+plotly
