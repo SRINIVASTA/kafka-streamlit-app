@@ -1,5 +1,5 @@
 streamlit
-confluent-kafka
+google-genai
 yfinance
-pandas
-pytz
+pydantic
+confluent-kafka
