@@ -15,10 +15,6 @@ st.subheader("Welcome, Appala Srinivas!")
 # Setup persistent application state variables
 if "previous_agent_signal" not in st.session_state:
     st.session_state.previous_agent_signal = None
-if "alert_notification_history" not in st.session_state:
-    st.session_state.alert_notification_history = []
-if "dispatched_emails_log" not in st.session_state:
-    st.session_state.dispatched_emails_log = []
 if "chat_conversations_log" not in st.session_state:
     st.session_state.chat_conversations_log = {}
 
@@ -27,21 +23,6 @@ if "stored_history_pool" not in st.session_state:
     st.session_state.stored_history_pool = {}
 if "stored_ticker_news" not in st.session_state:
     st.session_state.stored_ticker_news = {}
-# --- 🛰️ VIRTUAL EMAIL DISPATCH GATEWAY ---
-def simulate_and_send_email(subject, message_body):
-    if not receiver_emails_input:
-        return False
-    log_entry = {
-        "time": time.strftime("%H:%M:%S"),
-        "from": st.secrets.get("SENDER_EMAIL", "agent-bot@kafka-cloud.ai"),
-        "to": receiver_emails_input,
-        "subject": subject,
-        "body": message_body,
-        "status": "📨 Dispatched & Serialized via Kafka Event Loop",
-        "protocol": "SMTP Auth over Virtual TLS Port 587 (Bypassed Firewalls)"
-    }
-    st.session_state.dispatched_emails_log.insert(0, log_entry)
-    return True
 
 def get_kafka_config():
     if not api_secret_input:
@@ -60,7 +41,6 @@ def get_kafka_config():
 # Sidebar Configuration & Hybrid Authentication UI
 st.sidebar.header("🔐 Authentication")
 api_secret_input = st.sidebar.text_input("Enter Kafka API Secret (Password):", type="password")
-receiver_emails_input = st.sidebar.text_input("Enter Receiver Email Address:", type="password")
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Dynamic Horizon Selector")
@@ -76,21 +56,13 @@ selected_dates = st.sidebar.date_input(
 )
 
 # Main Screen Selector
+st.markdown("### 🔍 Multi-Exchange Target Selection")
 target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="HFCL.NS").upper().strip()
 
 if len(selected_dates) == 2:
     start_date, end_date = selected_dates
 else:
     st.stop()
-
-# Isolate system alert flags to current scrip view only
-if st.session_state.alert_notification_history:
-    filtered_alerts = [alert for alert in st.session_state.alert_notification_history if f" {target_ticker} " in alert]
-    if filtered_alerts:
-        st.markdown("---")
-        st.markdown(f"### 🚨 Live Agent Alert Notification Center ({target_ticker})")
-        for alert in filtered_alerts[:2]:
-            st.error(alert)
 
 TOPIC = "topic_0"
 # --- CORE EXECUTION WORKFLOW LOGIC ---
@@ -136,6 +108,8 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 payload = {
                     "ticker": target_ticker,
                     "price": round(float(row['Close']), 2),
+                    "high": round(float(row['High']), 2) if 'High' in row else round(float(row['Close']) * 1.02, 2),
+                    "low": round(float(row['Low']), 2) if 'Low' in row else round(float(row['Close']) * 0.98, 2),
                     "timestamp": localized_date.strftime("%Y-%m-%d"),
                     "currency": currency_symbol,
                     "exchange": exchange_name
@@ -146,7 +120,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         except Exception as e:
             st.error(f"Agent Ingestion Error: {e}")
             st.stop()
-
         # --- PHASE B: AGENT SCANNING (Consumer) ---
         try:
             consumer_config = kafka_config.copy()
@@ -177,6 +150,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         continue
             consumer.close()
 
+            # Store the consumed partitions safely to state parameters
             st.session_state.stored_history_pool[target_ticker] = history_pool
             st.session_state.stored_ticker_news[target_ticker] = ticker_news
 
@@ -215,44 +189,32 @@ if target_ticker in st.session_state.stored_history_pool:
         rs = gain / loss if loss != 0 else 0
         rsi_value = 100 - (100 / (1 + rs)) if loss != 0 else 100
         
+        # Floor Trader Pivot Point Levels
+        last_high = float(df['high'].iloc[-1]) if 'high' in df.columns else latest_price * 1.01
+        last_low = float(df['low'].iloc[-1]) if 'low' in df.columns else latest_price * 0.99
+        pivot_point = (last_high + last_low + latest_price) / 3
+        r1_level = (2 * pivot_point) - last_low
+        s1_level = (2 * pivot_point) - last_high
+        r2_level = pivot_point + (last_high - last_low)
+        s2_level = pivot_point - (last_high - last_low)
+        
         if latest_price > short_sma and short_sma > long_sma:
-            current_signal = "🟢 STRONG BUY"
+            current_signal, signal_type = "🟢 STRONG BUY", "BUY"
             reasoning = f"Price ({currency_symbol}{latest_price:.2f}) is trading above short-term localized support bands."
-            if rsi_value > 70:
-                reasoning += f" ⚠️ WARNING: RSI measures overbought ({rsi_value:.1f}). Overextension risk present."
         elif latest_price < short_sma and short_sma < long_sma:
-            current_signal = "🔴 STRONG SELL"
+            current_signal, signal_type = "🔴 STRONG SELL", "SELL"
             reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
-            if rsi_value < 30:
-                reasoning += f" 💡 NOTE: RSI measures oversold ({rsi_value:.1f}). Technical bounce potential noted."
         else:
-            current_signal = "🟡 HOLD"
+            current_signal, signal_type = "🟡 HOLD", "HOLD"
             reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price:.2f})."
 
-        st.markdown("#### 🤖 Agent Report Summary")
-        col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
-        col_m2.metric("Agent Action Signal", current_signal)
-        col_m3.metric("RSI Value (14 Days)", f"{rsi_value:.1f}")
-        st.info(f"🧠 **Agent Reasoning:** {reasoning}")
-        
-        # Simulated Order Panel Insertion Area
-        st.markdown("#### ⚡ Programmatic Order Execution Gateway")
-        with st.expander("💼 Route Order Payload Directly to Exchange Broker Gateway"):
-            col_trade_1, col_trade_2 = st.columns(2)
-            shares_count = col_trade_1.number_input("Order Share Volume Size:", min_value=1, value=10, step=1)
-            total_est_cost = shares_count * latest_price
-            col_trade_2.markdown(f"**Total Transaction Exposure Value:**\n### {currency_symbol}{total_est_cost:,.2f}")
-            
-            if st.button(f"⚡ Dispatched Webhook Target Order Entry for {target_ticker}"):
-                trade_payload = {"action": "BUY" if "BUY" in current_signal else "SELL", "ticker": target_ticker, "volume": shares_count, "execution_price": latest_price, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")}
-                st.success(f"📨 Serialized Trade Entry Order Package transmitted successfully: {json.dumps(trade_payload)}")
-        
-        # Real-Time Sentiment Streaming Feeds
-        st.markdown("---")
-        st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker}")
+        # Live News Sentiment Stream variables
         bullish_words = {"growth", "profit", "expand", "dividend", "bonus", "buy", "surge", "acquisition", "unveils", "rise", "positive", "partnership"}
         bearish_words = {"drop", "sluggish", "deficit", "breach", "backlash", "shutters", "risk", "sell", "decline", "fall", "investigating", "protest", "loss"}
+        
+        net_news_score = 0.0
+        news_count = 0
+        news_rendered_list = []
         
         if ticker_news:
             for article in ticker_news[:3]:
@@ -263,16 +225,52 @@ if target_ticker in st.session_state.stored_history_pool:
                 link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
                 
                 tokens = title.lower().split()
-                bullish_count = sum(1 for token in tokens if any(b_word in token for b_word in bullish_words))
-                bearish_count = sum(1 for token in tokens if any(sec_word in token for sec_word in bearish_words))
-                total_tokens = bullish_count + bearish_count
-                sentiment_score = 0.0 if total_tokens == 0 else round((bullish_count - bearish_count) / total_tokens, 2)
+                b_c = sum(1 for t in tokens if any(bw in t for bw in bullish_words))
+                br_c = sum(1 for t in tokens if any(brw in t for brw in bearish_words))
+                total_t = b_c + br_c
+                score = 0.0 if total_t == 0 else round((b_c - br_c) / total_t, 2)
                 
-                badge, color = ("📈 BULLISH", "green") if sentiment_score > 0 else (("📉 BEARISH", "red") if sentiment_score < 0 else ("⚖️ NEUTRAL", "gray"))
-                st.markdown(f"🔔 **{title}**")
-                col_news_a, col_news_b = st.columns(2)
-                col_news_a.caption(f"Source: {publisher} | [Read Full Article]({link})")
-                col_news_b.markdown(f":{color}[**{badge} ({sentiment_score:+.1f})**]")
+                net_news_score += score
+                news_count += 1
+                
+                badge, color = ("📈 BULLISH", "green") if score > 0 else (("📉 BEARISH", "red") if score < 0 else ("⚖️ NEUTRAL", "gray"))
+                news_rendered_list.append((title, publisher, link, badge, color, score))
+        
+        avg_sentiment = round(net_news_score / news_count, 2) if news_count > 0 else 0.0
+        
+        # Signal Divergence Guardrails
+        divergence_alert = None
+        if signal_type == "BUY" and avg_sentiment < -0.2:
+            divergence_alert = "⚠️ **AGENT DIVERGENCE WARNING:** Price chart signals a BUY, but media streaming sentiment is heavily BEARISH. Watch out for traps!"
+        elif signal_type == "SELL" and avg_sentiment > 0.2:
+            divergence_alert = "💡 **AGENT ACCUMULATION ALERT:** Chart signals a SELL, but media streaming sentiment is highly BULLISH. Reversal signature suspected."
+
+        st.markdown("#### 🤖 Agent Report Summary")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
+        col_m2.metric("Agent Action Signal", current_signal)
+        col_m3.metric("RSI Value (14 Days)", f"{rsi_value:.1f}")
+        st.info(f"🧠 **Agent Reasoning:** {reasoning}")
+        
+        if divergence_alert:
+            st.warning(divergence_alert)
+
+        # Pivot Point Dashboard Grid
+        st.markdown("#### 📊 Quantitative Volatility Floor Grid")
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        col_p1.metric("Resistance 2 (R2)", f"{currency_symbol}{r2_level:.2f}")
+        col_p2.metric("Resistance 1 (R1)", f"{currency_symbol}{r1_level:.2f}")
+        col_p3.metric("Support 1 (S1)", f"{currency_symbol}{s1_level:.2f}")
+        col_p4.metric("Support 2 (S2)", f"{currency_symbol}{s2_level:.2f}")
+        
+        st.markdown("---")
+        st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker} (Avg Mood: {avg_sentiment:+.2f})")
+        if news_rendered_list:
+            for item in news_rendered_list:
+                st.markdown(f"🔔 **{item[0]}**")
+                col_n_a, col_n_b = st.columns(2)
+                col_n_a.caption(f"Source: {item[1]} | [Read Full Article]({item[2]})")
+                col_n_b.markdown(f":{item[4]}[**{item[3]} ({item[5]:+.1f})**]")
         else:
             st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
 # --- INTERACTIVE CHAT INTERFACE AREA ---
@@ -280,7 +278,7 @@ st.markdown("---")
 st.markdown(f"### 💬 Interactive AI Agent Chat Messenger: {target_ticker}")
 
 if target_ticker not in st.session_state.chat_conversations_log:
-    st.session_state.chat_conversations_log[target_ticker] = [{"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or live sentiment metrics for {target_ticker}."}]
+    st.session_state.chat_conversations_log[target_ticker] = [{"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or live pivot grid statistics for {target_ticker}."}]
 
 for msg in st.session_state.chat_conversations_log[target_ticker]:
     with st.chat_message(msg["role"]):
@@ -312,22 +310,11 @@ if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}...")
                         reply_text = f"ℹ️ No recent corporate actions found in the public ledger for **{target_ticker}**."
                 except Exception as err:
                     reply_text = f"⚠️ Failed to parse corporate entries pipeline: {err}"
-        elif "sentiment" in user_query or "score" in user_query or "news" in user_query:
-            reply_text = f"📊 **Streaming News Sentiment Engine Status for {target_ticker}:**\n\nMy consumer thread scans incoming text payloads and isolates phrase momentum using lexical density checking."
+        elif "pivot" in user_query or "resistance" in user_query or "support" in user_query:
+            reply_text = f"📊 **Pivot Level Mathematical Explanation for {target_ticker}:**\n\nMy engine runs the standard Floor Trader Volatility Formula to calculate floor lines. Resistance layers (R1/R2) represent high-volume target ceilings where sellers historically supply liquidity, while Support levels (S1/S2) reflect price target floors where buying buyers frequently step in to defend momentum."
         else:
             reply_text = f"I am actively tracking the Kafka topic streams for **{target_ticker}**. The moving averages suggest a trend confirmation aligned with the current signal."
             
         st.write(reply_text)
     st.session_state.chat_conversations_log[target_ticker].append({"role": "assistant", "content": reply_text})
     st.rerun()
-
-# Real-Time Outbound Packet Logs Window
-if st.session_state.dispatched_emails_log:
-    filtered_emails = [log for log in st.session_state.dispatched_emails_log if f": {target_ticker}" in log.get("subject", "")]
-    if filtered_emails:
-        st.markdown("---")
-        st.markdown(f"### 📬 Outbound SMTP Email Outbox Packet Logs ({target_ticker})")
-        for log in filtered_emails[:2]:
-            with st.expander(f"✉️ Outbound Packet Payload Target: {log['to']} (Timestamp: {log['time']})"):
-                st.write(f"**Gateway Status:** `{log['status']}`\n**Network Layer:** `{log['protocol']}`")
-                st.text(f"From: {log['from']}\nSubject: {log['subject']}\n\nContent:\n{log['body']}")
