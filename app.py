@@ -221,9 +221,15 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 if ticker_news:
                     # Loop and render top 3 news cards dynamically
                     for article in ticker_news[:3]:
-                        title = article.get("title", "Market Update")
-                        publisher = article.get("publisher", "Financial News")
-                        link = article.get("link", "#")
+                        # Handle new nested yfinance news structure safely
+                        content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
+                        
+                        title = content_data.get("title", article.get("title", "Market Update"))
+                        publisher = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
+                        
+                        # Safely extract the structural external target URL
+                        link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
+                        
                         st.markdown(f"🔔 **{title}**")
                         st.caption(f"Source: {publisher} | [Read Full Article]({link})")
                         st.markdown("")
