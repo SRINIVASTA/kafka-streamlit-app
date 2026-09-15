@@ -69,7 +69,7 @@ selected_dates = st.sidebar.date_input(
 
 # 3. Main Screen Selector
 st.markdown("### 🔍 Multi-Exchange Target Selection")
-target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="AAPL").upper().strip()
+target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="RELIANCE.NS").upper().strip()
 
 if len(selected_dates) == 2:
     start_date, end_date = selected_dates
@@ -108,7 +108,11 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 try:
                     stock = yf.Ticker(target_ticker)
                     data = stock.history(start=start_date, end=end_date, interval="1d")
-                    # Dynamically capture real-time breaking market news parameters
+                    
+                    # Clean up split adjustments and non-numeric fields immediately
+                    if not data.empty:
+                        data = data.dropna(subset=['Close'])
+                        
                     ticker_news = stock.news
                 except Exception as ex:
                     st.error(f"yfinance Download Error: {ex}")
@@ -129,7 +133,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                     
                 payload = {
                     "ticker": target_ticker,
-                    "price": round(row['Close'], 2),
+                    "price": round(float(row['Close']), 2),
                     "timestamp": localized_date.strftime("%Y-%m-%d"),
                     "currency": currency_symbol,
                     "exchange": exchange_name
@@ -180,27 +184,32 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
             
             if history_pool:
                 df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
+                
+                # Double-verify formatting cleanup to clear out any leftover 'nan' rows before modeling
+                df['price'] = pd.to_numeric(df['price'], errors='coerce')
+                df = df.dropna(subset=['price'])
+                
                 st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
                 
-                latest_price = df['price'].iloc[-1]
-                short_sma = df['price'].rolling(window=min(5, len(df))).mean().iloc[-1]
-                long_sma = df['price'].rolling(window=min(20, len(df))).mean().iloc[-1]
+                latest_price = float(df['price'].iloc[-1])
+                short_sma = float(df['price'].rolling(window=min(5, len(df))).mean().iloc[-1])
+                long_sma = float(df['price'].rolling(window=min(20, len(df))).mean().iloc[-1])
                 
                 if latest_price > short_sma and short_sma > long_sma:
                     current_signal = "🟢 STRONG BUY"
-                    reasoning = f"Price ({currency_symbol}{latest_price}) is trading above short-term localized support bands."
+                    reasoning = f"Price ({currency_symbol}{latest_price:.2f}) is trading above short-term localized support bands."
                 elif latest_price < short_sma and short_sma < long_sma:
                     current_signal = "🔴 STRONG SELL"
                     reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
                 else:
                     current_signal = "🟡 HOLD"
-                    reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price})."
+                    reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price:.2f})."
 
                 if st.session_state.previous_agent_signal is None:
                     st.session_state.previous_agent_signal = "🟡 HOLD" if current_signal != "🟡 HOLD" else "🟢 STRONG BUY"
 
                 if st.session_state.previous_agent_signal != current_signal:
-                    alert_msg = f"🤖 AI Agent Alert: {target_ticker} shifted from {st.session_state.previous_agent_signal} to {current_signal}! Price: {currency_symbol}{latest_price}."
+                    alert_msg = f"🤖 AI Agent Alert: {target_ticker} shifted from {st.session_state.previous_agent_signal} to {current_signal}! Price: {currency_symbol}{latest_price:.2f}."
                     st.session_state.alert_notification_history.insert(0, f"⚡ Logged: {alert_msg} at {time.strftime('%H:%M:%S')}")
                     simulate_and_send_email(f"🚨 Kafka AI Agent Shift: {target_ticker}", alert_msg)
                     st.balloons()
@@ -210,7 +219,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 # Render Agent Insights to UI
                 st.markdown("#### 🤖 Agent Report Summary")
                 col1, col2 = st.columns(2)
-                col1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,}")
+                col1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
                 col2.metric("Agent Action Signal", current_signal)
                 st.info(f"🧠 **Agent Reasoning:** {reasoning}")
                 st.success(f"🎉 Dynamic multi-exchange cycle executed successfully.")
@@ -219,15 +228,18 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 st.markdown("---")
                 st.markdown(f"### 📰 Live Breaking News Feed: {target_ticker}")
                 if ticker_news:
-                    # Loop and render top 3 news cards dynamically
                     for article in ticker_news[:3]:
-                        # Handle new nested yfinance news structure safely
                         content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
                         
                         title = content_data.get("title", article.get("title", "Market Update"))
-                        publisher = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
                         
-                        # Safely extract the structural external target URL
+                        # Fix nested dictionary provider names for publisher output
+                        raw_pub = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
+                        if isinstance(raw_pub, dict):
+                            publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News"))
+                        else:
+                            publisher = str(raw_pub)
+                        
                         link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
                         
                         st.markdown(f"🔔 **{title}**")
