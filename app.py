@@ -297,13 +297,17 @@ if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}...")
                     if actions_df is not None and not actions_df.empty:
                         latest_actions = actions_df.tail(3).sort_index(ascending=False)
                         reply_text = f"📋 **Recent Corporate Actions recorded for {target_ticker}:**\n\n"
+                        
                         for idx, row in latest_actions.iterrows():
                             date_str = idx.strftime('%Y-%m-%d')
-                            if row['Stock Splits'] > 0:
-                                # Overwrite generic numeric factor labels for domestic NSE/BSE assets to state Bonus Issues clearly
+                            
+                            # FIXED: Check if 'Stock Splits' column exists in dataframe before reading it
+                            if 'Stock Splits' in latest_actions.columns and row['Stock Splits'] > 0:
                                 label = "1:1 Bonus Share Issue" if (".NS" in target_ticker or ".BO" in target_ticker) and row['Stock Splits'] == 2.0 else f"Stock Split Ratio of {row['Stock Splits']}"
                                 reply_text += f"▪️ **{date_str}:** {label}\n"
-                            if row['Dividends'] > 0:
+                                
+                            # FIXED: Check if 'Dividends' column exists in dataframe before reading it
+                            if 'Dividends' in latest_actions.columns and row['Dividends'] > 0:
                                 curr_sym = "₹" if (".NS" in target_ticker or ".BO" in target_ticker) else "$"
                                 reply_text += f"▪️ **{date_str}:** Cash Dividend Payout of **{curr_sym}{row['Dividends']}**\n"
                     else:
