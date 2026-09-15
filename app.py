@@ -84,44 +84,61 @@ if KAFKA_CONFIG:
     with col2:
         st.subheader("📈 Dynamic Analytics Pipeline")
         
-        # Synchronize UI input parameters
+        # 1. Synchronize UI inputs and add "1d" options cleanly
         st.session_state.active_ticker = st.text_input("Active Ticker Token:", value=st.session_state.active_ticker).upper()
-        st.session_state.active_tf = st.selectbox("Active Window Scale:", ["1d", "1mo", "1y", "5y", "10y"], index=2)
+        
+        st.session_state.active_tf = st.selectbox(
+            "Active Window Scale:", 
+            ["1d", "5d", "1mo", "3mo", "6mo", "1y", "5y", "10y"], 
+            index=5 # Defaults to 1y tracking baseline
+        )
 
         # =====================================================================
-        # ✅ FIX: ADD LIVE STOCK CHART GRAPH RENDERING ENGINE
+        # ✅ UPGRADED LIVE CHART ENGINE WITH EXTRA GRANULAR INTRA-DAY HANDLING
         # =====================================================================
         if st.session_state.active_ticker:
             try:
                 import yfinance as yf
                 import plotly.graph_objects as go
                 
-                # Fetch fresh chart tracking data from Yahoo Finance matching the active ticker state
                 stock_engine = yf.Ticker(st.session_state.active_ticker)
-                df = stock_engine.history(period=st.session_state.active_tf)
+                
+                # If the user selects a 1-day or 5-day horizon view, pull high-frequency data
+                if st.session_state.active_tf == "1d":
+                    df = stock_engine.history(period="1d", interval="5m")
+                elif st.session_state.active_tf == "5d":
+                    df = stock_engine.history(period="5d", interval="15m")
+                else:
+                    df = stock_engine.history(period=st.session_state.active_tf)
                 
                 if not df.empty:
-                    # Construct an interactive Plotly path canvas
+                    # Construct clean interactive Plotly layout tracking paths
                     fig = go.Figure()
+                    
+                    # Choose a line style or area fill based on time horizon velocity
                     fig.add_trace(go.Scatter(
                         x=df.index, 
                         y=df['Close'], 
                         mode='lines', 
                         name=st.session_state.active_ticker,
-                        line=dict(color='#00bc8c', width=2)
+                        line=dict(color='#00bc8c', width=2),
+                        fill='tozeroy' if st.session_state.active_tf in ["1d", "5d"] else None,
+                        fillcolor='rgba(0, 188, 140, 0.1)'
                     ))
+                    
                     fig.update_layout(
-                        title=f"{st.session_state.active_ticker} Performance History ({st.session_state.active_tf})",
+                        title=f"{st.session_state.active_ticker} Close Tracking ({st.session_state.active_tf})",
                         template="plotly_dark",
-                        xaxis_title="Timeline Window",
-                        yaxis_title="Asset Value Price",
+                        xaxis_title="Timeline / Date-Time Window",
+                        yaxis_title="Asset Value Price (INR)",
                         margin=dict(l=20, r=20, t=40, b=20),
                         height=350
                     )
-                    # Tell Streamlit to project the Plotly figure onto the screen canvas layout
+                    
+                    # Display the updated chart canvas
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.warning(f"No pricing charts available for token ticker: '{st.session_state.active_ticker}'")
+                    st.warning(f"No active data points found for ticker token '{st.session_state.active_ticker}' over a '{st.session_state.active_tf}' horizon.")
             except Exception as chart_err:
                 st.error(f"Failed to draw telemetry graph: {str(chart_err)}")
 
@@ -136,12 +153,11 @@ if KAFKA_CONFIG:
             })
             consumer.subscribe(['stock-results'])
             
-            # Non-blocking poll interface check
             msg = consumer.poll(timeout=0.2)
             if msg is not None and not msg.error():
                 response_data = json.loads(msg.value().decode('utf-8'))
                 
-                # Update memory queues and trigger a clean interface rewrite
+                # Update session states dynamically out of backend extraction pipelines
                 st.session_state.chat_history.append({"role": "assistant", "text": response_data["agent_reply"]})
                 st.session_state.active_ticker = response_data["updated_ticker"]
                 st.session_state.active_tf = response_data["updated_tf"]
