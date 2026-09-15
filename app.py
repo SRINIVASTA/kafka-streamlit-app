@@ -173,110 +173,113 @@ if target_ticker in st.session_state.stored_history_pool:
     if history_pool:
         df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
         
-        # FIXED: Explicitly coerce all data streams to numeric values to prevent ₹nan errors
         df['price'] = pd.to_numeric(df['price'], errors='coerce')
         df['high'] = pd.to_numeric(df.get('high', df['price'] * 1.02), errors='coerce')
         df['low'] = pd.to_numeric(df.get('low', df['price'] * 0.98), errors='coerce')
         df = df.dropna(subset=['price', 'high', 'low'])
         
-        st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
-        
-        # Calculate Technical Indicators
-        latest_price = float(df['price'].iloc[-1])
-        short_sma = float(df['price'].rolling(window=min(5, len(df))).mean().iloc[-1])
-        long_sma = float(df['price'].rolling(window=min(20, len(df))).mean().iloc[-1])
-        
-        # Rule-Based RSI Tracking Loop
-        delta = df['price'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=min(14, len(df))).mean().iloc[-1]
-        loss = (-delta.where(delta < 0, 0)).rolling(window=min(14, len(df))).mean().iloc[-1]
-        rs = gain / loss if loss != 0 else 0
-        rsi_value = 100 - (100 / (1 + rs)) if loss != 0 else 100
-        
-        # Floor Trader Pivot Point Levels
-        last_high = float(df['high'].iloc[-1])
-        last_low = float(df['low'].iloc[-1])
-        pivot_point = (last_high + last_low + latest_price) / 3
-        r1_level = (2 * pivot_point) - last_low
-        s1_level = (2 * pivot_point) - last_high
-        r2_level = pivot_point + (last_high - last_low)
-        s2_level = pivot_point - (last_high - last_low)
-        
-        if latest_price > short_sma and short_sma > long_sma:
-            current_signal, signal_type = "🟢 STRONG BUY", "BUY"
-            reasoning = f"Price ({currency_symbol}{latest_price:.2f}) is trading above short-term localized support bands."
-        elif latest_price < short_sma and short_sma < long_sma:
-            current_signal, signal_type = "🔴 STRONG SELL", "SELL"
-            reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
+        # --- FIXED: Added safety block to handle empty datasets elegantly ---
+        if not df.empty:
+            st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
+            
+            # Calculate Technical Indicators safely
+            latest_price = float(df['price'].iloc[-1])
+            short_sma = float(df['price'].rolling(window=min(5, len(df))).mean().iloc[-1])
+            long_sma = float(df['price'].rolling(window=min(20, len(df))).mean().iloc[-1])
+            
+            # Rule-Based RSI Tracking Loop
+            delta = df['price'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=min(14, len(df))).mean().iloc[-1]
+            loss = (-delta.where(delta < 0, 0)).rolling(window=min(14, len(df))).mean().iloc[-1]
+            rs = gain / loss if loss != 0 else 0
+            rsi_value = 100 - (100 / (1 + rs)) if loss != 0 else 100
+            
+            # Floor Trader Pivot Point Levels
+            last_high = float(df['high'].iloc[-1])
+            last_low = float(df['low'].iloc[-1])
+            pivot_point = (last_high + last_low + latest_price) / 3
+            r1_level = (2 * pivot_point) - last_low
+            s1_level = (2 * pivot_point) - last_high
+            r2_level = pivot_point + (last_high - last_low)
+            s2_level = pivot_point - (last_high - last_low)
+            
+            if latest_price > short_sma and short_sma > long_sma:
+                current_signal, signal_type = "🟢 STRONG BUY", "BUY"
+                reasoning = f"Price ({currency_symbol}{latest_price:.2f}) is trading above short-term localized support bands."
+            elif latest_price < short_sma and short_sma < long_sma:
+                current_signal, signal_type = "🔴 STRONG SELL", "SELL"
+                reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
+            else:
+                current_signal, signal_type = "🟡 HOLD", "HOLD"
+                reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price:.2f})."
+
+            # Live News Sentiment Stream variables
+            bullish_words = {"growth", "profit", "expand", "dividend", "bonus", "buy", "surge", "acquisition", "unveils", "rise", "positive", "partnership"}
+            bearish_words = {"drop", "sluggish", "deficit", "breach", "backlash", "shutters", "risk", "sell", "decline", "fall", "investigating", "protest", "loss"}
+            
+            net_news_score = 0.0
+            news_count = 0
+            news_rendered_list = []
+            
+            if ticker_news:
+                for article in ticker_news[:3]:
+                    content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
+                    title = content_data.get("title", article.get("title", "Market Update"))
+                    raw_pub = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
+                    publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News")) if isinstance(raw_pub, dict) else str(raw_pub)
+                    link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
+                    
+                    tokens = title.lower().split()
+                    b_c = sum(1 for t in tokens if any(bw in t for bw in bullish_words))
+                    br_c = sum(1 for t in tokens if any(brw in t for brw in bearish_words))
+                    total_t = b_c + br_c
+                    score = 0.0 if total_t == 0 else round((b_c - br_c) / total_t, 2)
+                    
+                    net_news_score += score
+                    news_count += 1
+                    
+                    badge, color = ("📈 BULLISH", "green") if score > 0 else (("📉 BEARISH", "red") if score < 0 else ("⚖️ NEUTRAL", "gray"))
+                    news_rendered_list.append((title, publisher, link, badge, color, score))
+            
+            avg_sentiment = round(net_news_score / news_count, 2) if news_count > 0 else 0.0
+            
+            # Signal Divergence Guardrails
+            divergence_alert = None
+            if signal_type == "BUY" and avg_sentiment < -0.2:
+                divergence_alert = "⚠️ **AGENT DIVERGENCE WARNING:** Price chart signals a BUY, but media streaming sentiment is heavily BEARISH. Watch out for traps!"
+            elif signal_type == "SELL" and avg_sentiment > 0.2:
+                divergence_alert = "💡 **AGENT ACCUMULATION ALERT:** Chart signals a SELL, but media streaming sentiment is highly BULLISH. Reversal signature suspected."
+
+            st.markdown("#### 🤖 Agent Report Summary")
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
+            col_m2.metric("Agent Action Signal", current_signal)
+            col_m3.metric("RSI Value (14 Days)", f"{rsi_value:.1f}")
+            st.info(f"🧠 **Agent Reasoning:** {reasoning}")
+            
+            if divergence_alert:
+                st.warning(divergence_alert)
+
+            # Pivot Point Dashboard Grid
+            st.markdown("#### 📊 Quantitative Volatility Floor Grid")
+            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+            col_p1.metric("Resistance 2 (R2)", f"{currency_symbol}{r2_level:.2f}")
+            col_p2.metric("Resistance 1 (R1)", f"{currency_symbol}{r1_level:.2f}")
+            col_p3.metric("Support 1 (S1)", f"{currency_symbol}{s1_level:.2f}")
+            col_p4.metric("Support 2 (S2)", f"{currency_symbol}{s2_level:.2f}")
+            
+            st.markdown("---")
+            st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker} (Avg Mood: {avg_sentiment:+.2f})")
+            if news_rendered_list:
+                for item in news_rendered_list:
+                    st.markdown(f"🔔 **{item[0]}**")
+                    col_n_a, col_n_b = st.columns(2)
+                    col_n_a.caption(f"Source: {item[1]} | [Read Full Article]({item[2]})")
+                    col_n_b.markdown(f":{item[4]}[**{item[3]} ({item[5]:+.1f})**]")
+            else:
+                st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
         else:
-            current_signal, signal_type = "🟡 HOLD", "HOLD"
-            reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price:.2f})."
-
-        # Live News Sentiment Stream variables
-        bullish_words = {"growth", "profit", "expand", "dividend", "bonus", "buy", "surge", "acquisition", "unveils", "rise", "positive", "partnership"}
-        bearish_words = {"drop", "sluggish", "deficit", "breach", "backlash", "shutters", "risk", "sell", "decline", "fall", "investigating", "protest", "loss"}
-        
-        net_news_score = 0.0
-        news_count = 0
-        news_rendered_list = []
-        
-        if ticker_news:
-            for article in ticker_news[:3]:
-                content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
-                title = content_data.get("title", article.get("title", "Market Update"))
-                raw_pub = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
-                publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News")) if isinstance(raw_pub, dict) else str(raw_pub)
-                link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
-                
-                tokens = title.lower().split()
-                b_c = sum(1 for t in tokens if any(bw in t for bw in bullish_words))
-                br_c = sum(1 for t in tokens if any(brw in t for brw in bearish_words))
-                total_t = b_c + br_c
-                score = 0.0 if total_t == 0 else round((b_c - br_c) / total_t, 2)
-                
-                net_news_score += score
-                news_count += 1
-                
-                badge, color = ("📈 BULLISH", "green") if score > 0 else (("📉 BEARISH", "red") if score < 0 else ("⚖️ NEUTRAL", "gray"))
-                news_rendered_list.append((title, publisher, link, badge, color, score))
-        
-        avg_sentiment = round(net_news_score / news_count, 2) if news_count > 0 else 0.0
-        
-        # Signal Divergence Guardrails
-        divergence_alert = None
-        if signal_type == "BUY" and avg_sentiment < -0.2:
-            divergence_alert = "⚠️ **AGENT DIVERGENCE WARNING:** Price chart signals a BUY, but media streaming sentiment is heavily BEARISH. Watch out for traps!"
-        elif signal_type == "SELL" and avg_sentiment > 0.2:
-            divergence_alert = "💡 **AGENT ACCUMULATION ALERT:** Chart signals a SELL, but media streaming sentiment is highly BULLISH. Reversal signature suspected."
-
-        st.markdown("#### 🤖 Agent Report Summary")
-        col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
-        col_m2.metric("Agent Action Signal", current_signal)
-        col_m3.metric("RSI Value (14 Days)", f"{rsi_value:.1f}")
-        st.info(f"🧠 **Agent Reasoning:** {reasoning}")
-        
-        if divergence_alert:
-            st.warning(divergence_alert)
-
-        # Pivot Point Dashboard Grid
-        st.markdown("#### 📊 Quantitative Volatility Floor Grid")
-        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-        col_p1.metric("Resistance 2 (R2)", f"{currency_symbol}{r2_level:.2f}")
-        col_p2.metric("Resistance 1 (R1)", f"{currency_symbol}{r1_level:.2f}")
-        col_p3.metric("Support 1 (S1)", f"{currency_symbol}{s1_level:.2f}")
-        col_p4.metric("Support 2 (S2)", f"{currency_symbol}{s2_level:.2f}")
-        
-        st.markdown("---")
-        st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker} (Avg Mood: {avg_sentiment:+.2f})")
-        if news_rendered_list:
-            for item in news_rendered_list:
-                st.markdown(f"🔔 **{item[0]}**")
-                col_n_a, col_n_b = st.columns(2)
-                col_n_a.caption(f"Source: {item[1]} | [Read Full Article]({item[2]})")
-                col_n_b.markdown(f":{item[4]}[**{item[3]} ({item[5]:+.1f})**]")
-        else:
-            st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
+            st.warning("⚠️ Sync completed, but history pool empty. Try clicking the button again to capture the partitions!")
 # --- INTERACTIVE CHAT INTERFACE AREA ---
 st.markdown("---")
 st.markdown(f"### 💬 Interactive AI Agent Chat Messenger: {target_ticker}")
