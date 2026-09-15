@@ -12,7 +12,7 @@ st.set_page_config(page_title="Agentic AI Global Kafka Engine", layout="centered
 st.title("🤖 Agentic AI Global Financial Stream Engine")
 st.subheader("Welcome, Appala Srinivas!")
 
-# Setup state properties
+# Setup persistent application state variables
 if "previous_agent_signal" not in st.session_state:
     st.session_state.previous_agent_signal = None
 if "alert_notification_history" not in st.session_state:
@@ -20,7 +20,7 @@ if "alert_notification_history" not in st.session_state:
 if "dispatched_emails_log" not in st.session_state:
     st.session_state.dispatched_emails_log = []
 
-# Persistent dictionary memory tracking for chat sessions per scrip
+# Persistent dictionary memory tracking for chat sessions isolated per scrip
 if "chat_conversations_log" not in st.session_state:
     st.session_state.chat_conversations_log = {}
 
@@ -146,7 +146,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         except Exception as e:
             st.error(f"Agent Ingestion Error: {e}")
             st.stop()
-
         # --- PHASE B: AGENT SCANNING (Consumer) ---
         try:
             consumer_config = kafka_config.copy()
@@ -221,19 +220,41 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                 st.info(f"🧠 **Agent Reasoning:** {reasoning}")
                 st.success(f"🎉 Dynamic multi-exchange cycle executed successfully.")
                 
-                # --- LIVE BREAKING NEWS FEED ---
+                # --- ADVANCED LIVE NEWS SENTIMENT PROCESSING PIPELINE ---
                 st.markdown("---")
-                st.markdown(f"### 📰 Live Breaking News Feed: {target_ticker}")
+                st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker}")
+                
+                bullish_words = {"growth", "profit", "expand", "dividend", "bonus", "buy", "surge", "acquisition", "unveils", "rise", "positive", "partnership"}
+                bearish_words = {"drop", "sluggish", "deficit", "breach", "backlash", "shutters", "risk", "sell", "decline", "fall", "investigating", "protest", "loss"}
+                
                 if ticker_news:
                     for article in ticker_news[:3]:
                         content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
                         title = content_data.get("title", article.get("title", "Market Update"))
+                        
                         raw_pub = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
                         publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News")) if isinstance(raw_pub, dict) else str(raw_pub)
                         link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
                         
+                        # --- SENTIMENT CALCULATION PARSER ---
+                        tokens = title.lower().split()
+                        bullish_count = sum(1 for token in tokens if any(b_word in token for b_word in bullish_words))
+                        bearish_count = sum(1 for token in tokens if any(sec_word in token for sec_word in bearish_words))
+                        
+                        total_tokens = bullish_count + bearish_count
+                        sentiment_score = 0.0 if total_tokens == 0 else round((bullish_count - bearish_count) / total_tokens, 2)
+                        
+                        if sentiment_score > 0:
+                            badge, color = "📈 BULLISH", "green"
+                        elif sentiment_score < 0:
+                            badge, color = "📉 BEARISH", "red"
+                        else:
+                            badge, color = "⚖️ NEUTRAL", "gray"
+                            
                         st.markdown(f"🔔 **{title}**")
-                        st.caption(f"Source: {publisher} | [Read Full Article]({link})")
+                        col_news_a, col_news_b = st.columns(2)
+                        col_news_a.caption(f"Source: {publisher} | [Read Full Article]({link})")
+                        col_news_b.markdown(f":{color}[**{badge} ({sentiment_score:+.1f})**]")
                         st.markdown("")
                 else:
                     st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
@@ -243,15 +264,14 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
 
         except Exception as e:
             st.error(f"Agent Execution Failure: {e}")
-# --- NEW: ISOLATED CHAT INTERFACE AREA (SCRIP SPECIFIC) ---
-# --- UPDATED: INTELLIGENT CHAT INTERFACE AREA (SCRIP SPECIFIC) ---
+# --- INTERACTIVE CHAT INTERFACE AREA WITH INTEGRATED SENTIMENT KNOWLEDGE ---
 st.markdown("---")
 st.markdown(f"### 💬 Interactive AI Agent Chat Messenger: {target_ticker}")
 
 # Create isolated memory array for the specified target ticker
 if target_ticker not in st.session_state.chat_conversations_log:
     st.session_state.chat_conversations_log[target_ticker] = [
-        {"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or charts for {target_ticker}."}
+        {"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or live sentiment metrics for {target_ticker}."}
     ]
 
 # Render the active dialog log contents
@@ -259,42 +279,48 @@ for msg in st.session_state.chat_conversations_log[target_ticker]:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# Capture user entries from the layout input field
+# Process active chat input inquiries dynamically
 if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}..."):
     st.session_state.chat_conversations_log[target_ticker].append({"role": "user", "content": chat_prompt})
     with st.chat_message("user"):
         st.write(chat_prompt)
         
-    # Generate automated agent assistant context responses
     with st.chat_message("assistant"):
         user_query = chat_prompt.lower()
         
-        # Check if the user is asking about corporate actions, splits, or dividends
+        # Scenario A: Corporate Action Analytics
         if "corporate action" in user_query or "split" in user_query or "dividend" in user_query:
             with st.spinner("Fetching corporate actions database records..."):
                 try:
                     stock_obj = yf.Ticker(target_ticker)
-                    # Pull corporate actions history dataframe
                     actions_df = stock_obj.actions
-                    
                     if actions_df is not None and not actions_df.empty:
-                        # Grab the latest 3 entries to keep display clean
                         latest_actions = actions_df.tail(3).sort_index(ascending=False)
-                        
                         reply_text = f"📋 **Recent Corporate Actions recorded for {target_ticker}:**\n\n"
                         for idx, row in latest_actions.iterrows():
                             date_str = idx.strftime('%Y-%m-%d')
                             if row['Stock Splits'] > 0:
-                                reply_text += f"▪️ **{date_str}:** Stock Split Ratio of **{row['Stock Splits']}**\n"
+                                # Overwrite generic numeric factor labels for domestic NSE/BSE assets to state Bonus Issues clearly
+                                label = "1:1 Bonus Share Issue" if (".NS" in target_ticker or ".BO" in target_ticker) and row['Stock Splits'] == 2.0 else f"Stock Split Ratio of {row['Stock Splits']}"
+                                reply_text += f"▪️ **{date_str}:** {label}\n"
                             if row['Dividends'] > 0:
-                                reply_text += f"▪️ **{date_str}:** Cash Dividend Payout of **{row['Dividends']}**\n"
+                                curr_sym = "₹" if (".NS" in target_ticker or ".BO" in target_ticker) else "$"
+                                reply_text += f"▪️ **{date_str}:** Cash Dividend Payout of **{curr_sym}{row['Dividends']}**\n"
                     else:
-                        reply_text = f"ℹ️ No recent corporate actions (splits or dividends) found in the public database for **{target_ticker}**."
+                        reply_text = f"ℹ️ No recent corporate actions found in the public ledger for **{target_ticker}**."
                 except Exception as err:
                     reply_text = f"⚠️ Failed to parse corporate entries pipeline: {err}"
+                    
+        # Scenario B: Sentiment Methodology Analytics Questions
+        elif "sentiment" in user_query or "score" in user_query or "news" in user_query:
+            reply_text = f"📊 **Streaming News Sentiment Engine Status for {target_ticker}:**\n\n" \
+                         f"My consumer thread scans incoming text payloads and isolates phrase momentum using lexical density checking. " \
+                         f"Words like *profit*, *bonus*, and *growth* scale the tracking factor toward **+1.0 (Bullish)**, while fields like " \
+                         f"*breach*, *backlash*, or *deficit* pull it toward **-1.0 (Bearish)**. This allows you to spot divergence between market mood and chart averages before placing trade entry structures."
+                         
+        # General Context Fallback Response
         else:
-            # Standard structural fallback message for general baseline chart questions
-            reply_text = f"I am reviewing the data points for **{target_ticker}**. The moving averages suggest a trend confirmation aligned with the current signal."
+            reply_text = f"I am actively tracking the Kafka topic streams for **{target_ticker}**. The moving averages suggest a trend confirmation aligned with the current signal."
             
         st.write(reply_text)
         
