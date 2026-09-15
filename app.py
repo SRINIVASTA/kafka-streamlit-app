@@ -19,11 +19,14 @@ if "alert_notification_history" not in st.session_state:
     st.session_state.alert_notification_history = []
 if "dispatched_emails_log" not in st.session_state:
     st.session_state.dispatched_emails_log = []
-
-# Persistent dictionary memory tracking for chat sessions isolated per scrip
 if "chat_conversations_log" not in st.session_state:
     st.session_state.chat_conversations_log = {}
 
+# --- FIXED: Persistent Storage for Streaming Data Layout components ---
+if "stored_history_pool" not in st.session_state:
+    st.session_state.stored_history_pool = {}
+if "stored_ticker_news" not in st.session_state:
+    st.session_state.stored_ticker_news = {}
 # --- 🛰️ VIRTUAL EMAIL DISPATCH GATEWAY ---
 def simulate_and_send_email(subject, message_body):
     if not receiver_emails_input:
@@ -54,7 +57,7 @@ def get_kafka_config():
         'session.timeout.ms': 45000,
     }
 
-# 2. Sidebar Configuration & Hybrid Authentication UI
+# Sidebar Configuration & Hybrid Authentication UI
 st.sidebar.header("🔐 Authentication")
 api_secret_input = st.sidebar.text_input("Enter Kafka API Secret (Password):", type="password")
 receiver_emails_input = st.sidebar.text_input("Enter Receiver Email Address:", type="password")
@@ -72,9 +75,9 @@ selected_dates = st.sidebar.date_input(
     help="The calendar parameters automatically expand tomorrow matching real-world time shifts."
 )
 
-# 3. Main Screen Selector
+# Main Screen Selector
 st.markdown("### 🔍 Multi-Exchange Target Selection")
-target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="RELIANCE.NS").upper().strip()
+target_ticker = st.text_input("Enter any Global Symbol (e.g., RELIANCE.NS, AAPL, BTC-USD):", value="HFCL.NS").upper().strip()
 
 if len(selected_dates) == 2:
     start_date, end_date = selected_dates
@@ -96,7 +99,6 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
     kafka_config = get_kafka_config()
     if kafka_config:
         
-        # --- DYNAMIC EXCHANGE & TIMEZONE DETECTION LAYER ---
         if ".NS" in target_ticker or ".BO" in target_ticker:
             exchange_tz = pytz.timezone("Asia/Kolkata")
             currency_symbol = "₹"
@@ -146,6 +148,7 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
         except Exception as e:
             st.error(f"Agent Ingestion Error: {e}")
             st.stop()
+
         # --- PHASE B: AGENT SCANNING (Consumer) ---
         try:
             consumer_config = kafka_config.copy()
@@ -176,110 +179,96 @@ if st.button(f"🤖 Activate Agent for {target_ticker}"):
                         continue
             consumer.close()
 
-            # --- PHASE C: RENDER TO USER INTERFACE ---
-            st.markdown("---")
-            st.markdown(f"### 📡 AI Agent Execution Dashboard: {target_ticker}")
-            st.caption(f"🌎 **Active Operational Node:** `{exchange_name}`")
-            
-            if history_pool:
-                df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
-                df['price'] = pd.to_numeric(df['price'], errors='coerce')
-                df = df.dropna(subset=['price'])
-                
-                st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
-                
-                latest_price = float(df['price'].iloc[-1])
-                short_sma = float(df['price'].rolling(window=min(5, len(df))).mean().iloc[-1])
-                long_sma = float(df['price'].rolling(window=min(20, len(df))).mean().iloc[-1])
-                
-                if latest_price > short_sma and short_sma > long_sma:
-                    current_signal = "🟢 STRONG BUY"
-                    reasoning = f"Price ({currency_symbol}{latest_price:.2f}) is trading above short-term localized support bands."
-                elif latest_price < short_sma and short_sma < long_sma:
-                    current_signal = "🔴 STRONG SELL"
-                    reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
-                else:
-                    current_signal = "🟡 HOLD"
-                    reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price:.2f})."
-
-                if st.session_state.previous_agent_signal is None:
-                    st.session_state.previous_agent_signal = "🟡 HOLD" if current_signal != "🟡 HOLD" else "🟢 STRONG BUY"
-
-                if st.session_state.previous_agent_signal != current_signal:
-                    alert_msg = f"🤖 AI Agent Alert: {target_ticker} shifted from {st.session_state.previous_agent_signal} to {current_signal}! Price: {currency_symbol}{latest_price:.2f}."
-                    st.session_state.alert_notification_history.insert(0, f"⚡ Logged: {alert_msg} at {time.strftime('%H:%M:%S')}")
-                    simulate_and_send_email(f"🚨 Kafka AI Agent Shift: {target_ticker}", alert_msg)
-                    st.balloons()
-
-                st.session_state.previous_agent_signal = current_signal
-
-                st.markdown("#### 🤖 Agent Report Summary")
-                col1, col2 = st.columns(2)
-                col1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
-                col2.metric("Agent Action Signal", current_signal)
-                st.info(f"🧠 **Agent Reasoning:** {reasoning}")
-                st.success(f"🎉 Dynamic multi-exchange cycle executed successfully.")
-                
-                # --- ADVANCED LIVE NEWS SENTIMENT PROCESSING PIPELINE ---
-                st.markdown("---")
-                st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker}")
-                
-                bullish_words = {"growth", "profit", "expand", "dividend", "bonus", "buy", "surge", "acquisition", "unveils", "rise", "positive", "partnership"}
-                bearish_words = {"drop", "sluggish", "deficit", "breach", "backlash", "shutters", "risk", "sell", "decline", "fall", "investigating", "protest", "loss"}
-                
-                if ticker_news:
-                    for article in ticker_news[:3]:
-                        content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
-                        title = content_data.get("title", article.get("title", "Market Update"))
-                        
-                        raw_pub = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
-                        publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News")) if isinstance(raw_pub, dict) else str(raw_pub)
-                        link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
-                        
-                        # --- SENTIMENT CALCULATION PARSER ---
-                        tokens = title.lower().split()
-                        bullish_count = sum(1 for token in tokens if any(b_word in token for b_word in bullish_words))
-                        bearish_count = sum(1 for token in tokens if any(sec_word in token for sec_word in bearish_words))
-                        
-                        total_tokens = bullish_count + bearish_count
-                        sentiment_score = 0.0 if total_tokens == 0 else round((bullish_count - bearish_count) / total_tokens, 2)
-                        
-                        if sentiment_score > 0:
-                            badge, color = "📈 BULLISH", "green"
-                        elif sentiment_score < 0:
-                            badge, color = "📉 BEARISH", "red"
-                        else:
-                            badge, color = "⚖️ NEUTRAL", "gray"
-                            
-                        st.markdown(f"🔔 **{title}**")
-                        col_news_a, col_news_b = st.columns(2)
-                        col_news_a.caption(f"Source: {publisher} | [Read Full Article]({link})")
-                        col_news_b.markdown(f":{color}[**{badge} ({sentiment_score:+.1f})**]")
-                        st.markdown("")
-                else:
-                    st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
-                    
-            else:
-                st.warning("⚠️ Sync completed, but history pool empty. Try clicking the button again to capture the partitions!")
+            # --- FIXED: Commit extracted parameters directly to memory arrays ---
+            st.session_state.stored_history_pool[target_ticker] = history_pool
+            st.session_state.stored_ticker_news[target_ticker] = ticker_news
 
         except Exception as e:
             st.error(f"Agent Execution Failure: {e}")
-# --- INTERACTIVE CHAT INTERFACE AREA WITH INTEGRATED SENTIMENT KNOWLEDGE ---
+# --- PHASE C: PERSISTENT UI RENDERING ENGINE ---
+if target_ticker in st.session_state.stored_history_pool:
+    history_pool = st.session_state.stored_history_pool[target_ticker]
+    ticker_news = st.session_state.stored_ticker_news.get(target_ticker, [])
+    
+    if ".NS" in target_ticker or ".BO" in target_ticker:
+        currency_symbol, exchange_name = "₹", "National Stock Exchange of India (NSE) / IST Timezone"
+    else:
+        currency_symbol, exchange_name = "$", "Global Market Exchange / US Eastern Timezone"
+
+    st.markdown("---")
+    st.markdown(f"### 📡 AI Agent Execution Dashboard: {target_ticker}")
+    st.caption(f"🌎 **Active Operational Node:** `{exchange_name}`")
+    
+    if history_pool:
+        df = pd.DataFrame(history_pool).drop_duplicates(subset=['timestamp']).sort_values(by="timestamp")
+        df['price'] = pd.to_numeric(df['price'], errors='coerce')
+        df = df.dropna(subset=['price'])
+        
+        st.line_chart(data=df, x="timestamp", y="price", use_container_width=True)
+        
+        latest_price = float(df['price'].iloc[-1])
+        short_sma = float(df['price'].rolling(window=min(5, len(df))).mean().iloc[-1])
+        long_sma = float(df['price'].rolling(window=min(20, len(df))).mean().iloc[-1])
+        
+        if latest_price > short_sma and short_sma > long_sma:
+            current_signal = "🟢 STRONG BUY"
+            reasoning = f"Price ({currency_symbol}{latest_price:.2f}) is trading above short-term localized support bands."
+        elif latest_price < short_sma and short_sma < long_sma:
+            current_signal = "🔴 STRONG SELL"
+            reasoning = f"Price dropped below baseline moving averages. Downward breakout trend confirmed."
+        else:
+            current_signal = "🟡 HOLD"
+            reasoning = f"Asset moving sideways around its long-term average ({currency_symbol}{latest_price:.2f})."
+
+        st.markdown("#### 🤖 Agent Report Summary")
+        col1, col2 = st.columns(2)
+        col1.metric(f"Latest Price ({currency_symbol})", f"{currency_symbol}{latest_price:,.2f}")
+        col2.metric("Agent Action Signal", current_signal)
+        st.info(f"🧠 **Agent Reasoning:** {reasoning}")
+        
+        # --- ADVANCED LIVE NEWS SENTIMENT PROCESSING ---
+        st.markdown("---")
+        st.markdown(f"### 📰 Live Real-Time Sentiment Streaming Feed: {target_ticker}")
+        
+        bullish_words = {"growth", "profit", "expand", "dividend", "bonus", "buy", "surge", "acquisition", "unveils", "rise", "positive", "partnership"}
+        bearish_words = {"drop", "sluggish", "deficit", "breach", "backlash", "shutters", "risk", "sell", "decline", "fall", "investigating", "protest", "loss"}
+        
+        if ticker_news:
+            for article in ticker_news[:3]:
+                content_data = article.get("content", {}) if isinstance(article.get("content"), dict) else article
+                title = content_data.get("title", article.get("title", "Market Update"))
+                raw_pub = content_data.get("provider", content_data.get("publisher", article.get("publisher", "Financial News")))
+                publisher = raw_pub.get("displayName", raw_pub.get("name", "Financial News")) if isinstance(raw_pub, dict) else str(raw_pub)
+                link = content_data.get("clickThroughUrl", {}).get("url", content_data.get("link", article.get("link", "#")))
+                
+                tokens = title.lower().split()
+                bullish_count = sum(1 for token in tokens if any(b_word in token for b_word in bullish_words))
+                bearish_count = sum(1 for token in tokens if any(sec_word in token for sec_word in bearish_words))
+                total_tokens = bullish_count + bearish_count
+                sentiment_score = 0.0 if total_tokens == 0 else round((bullish_count - bearish_count) / total_tokens, 2)
+                
+                badge, color = ("📈 BULLISH", "green") if sentiment_score > 0 else (("📉 BEARISH", "red") if sentiment_score < 0 else ("⚖️ NEUTRAL", "gray"))
+                    
+                st.markdown(f"🔔 **{title}**")
+                col_news_a, col_news_b = st.columns(2)
+                col_news_a.caption(f"Source: {publisher} | [Read Full Article]({link})")
+                col_news_b.markdown(f":{color}[**{badge} ({sentiment_score:+.1f})**]")
+        else:
+            st.info("ℹ️ No breaking news elements recorded for this asset layout segment right now.")
+
+# --- INTERACTIVE CHAT INTERFACE AREA ---
 st.markdown("---")
 st.markdown(f"### 💬 Interactive AI Agent Chat Messenger: {target_ticker}")
 
-# Create isolated memory array for the specified target ticker
 if target_ticker not in st.session_state.chat_conversations_log:
     st.session_state.chat_conversations_log[target_ticker] = [
         {"role": "assistant", "content": f"Hello! Ask me any analysis question about corporate actions, splits, dividends, or live sentiment metrics for {target_ticker}."}
     ]
 
-# Render the active dialog log contents
 for msg in st.session_state.chat_conversations_log[target_ticker]:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
-# Process active chat input inquiries dynamically
 if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}..."):
     st.session_state.chat_conversations_log[target_ticker].append({"role": "user", "content": chat_prompt})
     with st.chat_message("user"):
@@ -287,8 +276,6 @@ if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}...")
         
     with st.chat_message("assistant"):
         user_query = chat_prompt.lower()
-        
-        # Scenario A: Corporate Action Analytics
         if "corporate action" in user_query or "split" in user_query or "dividend" in user_query:
             with st.spinner("Fetching corporate actions database records..."):
                 try:
@@ -297,39 +284,25 @@ if chat_prompt := st.chat_input(f"Inquire details regarding {target_ticker}...")
                     if actions_df is not None and not actions_df.empty:
                         latest_actions = actions_df.tail(3).sort_index(ascending=False)
                         reply_text = f"📋 **Recent Corporate Actions recorded for {target_ticker}:**\n\n"
-                        
                         for idx, row in latest_actions.iterrows():
                             date_str = idx.strftime('%Y-%m-%d')
-                            
-                            # FIXED: Check if 'Stock Splits' column exists in dataframe before reading it
                             if 'Stock Splits' in latest_actions.columns and row['Stock Splits'] > 0:
                                 label = "1:1 Bonus Share Issue" if (".NS" in target_ticker or ".BO" in target_ticker) and row['Stock Splits'] == 2.0 else f"Stock Split Ratio of {row['Stock Splits']}"
                                 reply_text += f"▪️ **{date_str}:** {label}\n"
-                                
-                            # FIXED: Check if 'Dividends' column exists in dataframe before reading it
                             if 'Dividends' in latest_actions.columns and row['Dividends'] > 0:
-                                curr_sym = "₹" if (".NS" in target_ticker or ".BO" in target_ticker) else "$"
-                                reply_text += f"▪️ **{date_str}:** Cash Dividend Payout of **{curr_sym}{row['Dividends']}**\n"
+                                reply_text += f"▪️ **{date_str}:** Cash Dividend Payout of **{currency_symbol}{row['Dividends']}**\n"
                     else:
                         reply_text = f"ℹ️ No recent corporate actions found in the public ledger for **{target_ticker}**."
                 except Exception as err:
                     reply_text = f"⚠️ Failed to parse corporate entries pipeline: {err}"
-                    
-        # Scenario B: Sentiment Methodology Analytics Questions
         elif "sentiment" in user_query or "score" in user_query or "news" in user_query:
-            reply_text = f"📊 **Streaming News Sentiment Engine Status for {target_ticker}:**\n\n" \
-                         f"My consumer thread scans incoming text payloads and isolates phrase momentum using lexical density checking. " \
-                         f"Words like *profit*, *bonus*, and *growth* scale the tracking factor toward **+1.0 (Bullish)**, while fields like " \
-                         f"*breach*, *backlash*, or *deficit* pull it toward **-1.0 (Bearish)**. This allows you to spot divergence between market mood and chart averages before placing trade entry structures."
-                         
-        # General Context Fallback Response
+            reply_text = f"📊 **Streaming News Sentiment Engine Status for {target_ticker}:**\n\nMy consumer thread scans incoming text payloads and isolates phrase momentum using lexical density checking."
         else:
             reply_text = f"I am actively tracking the Kafka topic streams for **{target_ticker}**. The moving averages suggest a trend confirmation aligned with the current signal."
             
         st.write(reply_text)
-        
     st.session_state.chat_conversations_log[target_ticker].append({"role": "assistant", "content": reply_text})
-
+    st.rerun()
 
 # 📦 REAL-TIME DISPATCH LOG INTERFACE
 if st.session_state.dispatched_emails_log:
