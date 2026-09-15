@@ -88,6 +88,43 @@ if KAFKA_CONFIG:
         st.session_state.active_ticker = st.text_input("Active Ticker Token:", value=st.session_state.active_ticker).upper()
         st.session_state.active_tf = st.selectbox("Active Window Scale:", ["1d", "1mo", "1y", "5y", "10y"], index=2)
 
+        # =====================================================================
+        # ✅ FIX: ADD LIVE STOCK CHART GRAPH RENDERING ENGINE
+        # =====================================================================
+        if st.session_state.active_ticker:
+            try:
+                import yfinance as yf
+                import plotly.graph_objects as go
+                
+                # Fetch fresh chart tracking data from Yahoo Finance matching the active ticker state
+                stock_engine = yf.Ticker(st.session_state.active_ticker)
+                df = stock_engine.history(period=st.session_state.active_tf)
+                
+                if not df.empty:
+                    # Construct an interactive Plotly path canvas
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=df.index, 
+                        y=df['Close'], 
+                        mode='lines', 
+                        name=st.session_state.active_ticker,
+                        line=dict(color='#00bc8c', width=2)
+                    ))
+                    fig.update_layout(
+                        title=f"{st.session_state.active_ticker} Performance History ({st.session_state.active_tf})",
+                        template="plotly_dark",
+                        xaxis_title="Timeline Window",
+                        yaxis_title="Asset Value Price",
+                        margin=dict(l=20, r=20, t=40, b=20),
+                        height=350
+                    )
+                    # Tell Streamlit to project the Plotly figure onto the screen canvas layout
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning(f"No pricing charts available for token ticker: '{st.session_state.active_ticker}'")
+            except Exception as chart_err:
+                st.error(f"Failed to draw telemetry graph: {str(chart_err)}")
+
         # ---------------------------------------------------------------------
         # ASYNCHRONOUS KAFKA CONSUMER LOOP
         # ---------------------------------------------------------------------
@@ -114,5 +151,6 @@ if KAFKA_CONFIG:
             consumer.close()
         except Exception as e:
             st.caption(f"Waiting for backend data pipelines stream... ({str(e)})")
+
 else:
     st.info("👋 Enter your Kafka API Secret in the sidebar panel to unlock the live workspace terminal window.")
